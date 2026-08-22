@@ -1,0 +1,457 @@
+from unittest.mock import patch
+from pathlib import Path
+
+import pytest
+
+from src import video_utils
+
+
+def test_get_scaled_font_size_preserves_visible_ui_range():
+    sizes = [
+        video_utils.get_scaled_font_size(size, 1080)
+        for size in (12, 24, 32, 48, 72)
+    ]
+
+    assert sizes == [26, 46, 62, 93, 132]
+    assert sizes == sorted(sizes)
+
+
+def test_build_ass_subtitles_preserves_background_template(tmp_path):
+    video_path = tmp_path / "source.mp4"
+    video_path.with_suffix(".transcript_cache.json").write_text(
+        """
+        {
+          "version": 2,
+          "words": [
+            {"text": "quiet", "start": 0, "end": 400, "confidence": 0.99},
+            {"text": "caption", "start": 400, "end": 900, "confidence": 0.99}
+          ],
+          "utterances": [],
+          "text": "quiet caption"
+        }
+        """,
+        encoding="utf-8",
+    )
+    ass_path = tmp_path / "captions.ass"
+
+    success = video_utils.build_assemblyai_ass_subtitles(
+        video_path,
+        clip_start=0.0,
+        clip_end=1.0,
+        video_width=1080,
+        video_height=1920,
+        output_ass_path=ass_path,
+        caption_template="minimal",
+        keep_ranges=[(0.0, 1.0)],
+    )
+
+    content = ass_path.read_text(encoding="utf-8")
+    assert success is True
+    assert "Style: Default" in content
+    assert ",3," in content
+    assert "\\fad(120,120)" in content
+
+
+def test_prepare_audio_for_transcription_extracts_compact_mp3(tmp_path):
+    video_path = tmp_path / "source.mp4"
+    video_path.write_bytes(b"video")
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, timeout=900):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"audio")
+        return Result()
+
+    with patch("src.video_utils.run_ffmpeg_command", side_effect=fake_run):
+        audio_path = video_utils._prepare_audio_for_transcription(video_path)
+
+    assert audio_path.name == "source.assemblyai.mp3"
+    assert audio_path.read_bytes() == b"audio"
+    assert commands[0][0] == "ffmpeg"
+    assert "-vn" in commands[0]
+    assert "64k" in commands[0]
+
+
+def test_apply_transition_effect_builds_ffmpeg_xfade_command(tmp_path):
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, timeout=900):
+        commands.append(command)
+        return Result()
+
+    with (
+        patch("src.video_utils.ffprobe_duration", side_effect=[4.0, 4.0]),
+        patch("src.video_utils.ffprobe_video_size", return_value=(1080, 1920)),
+        patch("src.video_utils.run_ffmpeg_command", side_effect=fake_run),
+    ):
+        success = video_utils.apply_transition_effect(
+            tmp_path / "clip1.mp4",
+            tmp_path / "clip2.mp4",
+            tmp_path / "transition.mp4",
+            tmp_path / "out.mp4",
+        )
+
+    assert success is True
+    command = commands[0]
+    filter_graph = command[command.index("-filter_complex") + 1]
+    assert "xfade=transition=fade:duration=1.500:offset=0" in filter_graph
+    assert "trim=start=2.500:end=4.000" in filter_graph
+    assert "trim=start=1.500:end=4.000" in filter_graph
+    assert "-map" in command
+
+
+def test_create_clips_with_transitions_keeps_standalone_clip_exports(tmp_path):
+    clips_info = [{"filename": "clip-1.mp4", "path": str(tmp_path / "clip-1.mp4")}]
+
+    with (
+        patch(
+            "src.video_utils.create_clips_from_segments", return_value=clips_info
+        ) as mock_create,
+        patch(
+            "src.video_utils.get_available_transitions",
+            side_effect=AssertionError("should not load transitions"),
+        ),
+    ):
+        result = video_utils.create_clips_with_transitions(
+            tmp_path / "source.mp4",
+            [{"start_time": "00:00", "end_time": "00:10", "text": "hook"}],
+            tmp_path,
+            font_family="TikTokSans-Regular",
+            font_size=24,
+            font_color="#FFFFFF",
+            caption_template="default",
+            output_format="vertical",
+            add_subtitles=True,
+        )
+
+    assert result == clips_info
+    mock_create.assert_called_once()
+
+
+def test_build_assemblyai_ass_subtitles_uses_cached_word_timings(tmp_path):
+    video_path = tmp_path / "source.mp4"
+    cache_path = video_path.with_suffix(".transcript_cache.json")
+    cache_path.write_text(
+        """
+        {
+          "version": 2,
+          "words": [
+            {"text": "hello", "start": 1000, "end": 1300, "confidence": 0.99},
+            {"text": "world", "start": 1300, "end": 1800, "confidence": 0.99}
+          ],
+          "utterances": [],
+          "text": "hello world"
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    ass_path = tmp_path / "captions.ass"
+    success = video_utils.build_assemblyai_ass_subtitles(
+        video_path,
+        clip_start=1.0,
+        clip_end=2.0,
+        video_width=1080,
+        video_height=1920,
+        output_ass_path=ass_path,
+        font_family="TikTokSans-Regular",
+        font_size=32,
+        font_color="#FFFFFF",
+        caption_template="default",
+        keep_ranges=[(1.0, 2.0)],
+    )
+
+    content = ass_path.read_text(encoding="utf-8")
+    assert success is True
+    assert "PlayResX: 1080" in content
+    # Words are now each wrapped in their own font/colour span for per-word
+    # karaoke highlighting, so check the cached words are rendered individually.
+    assert "hello" in content
+    assert "world" in content
+    assert "Dialogue:" in content
+
+
+def test_ass_font_name_uses_internal_font_family():
+    assert video_utils.ass_font_name("THEBOLDFONT") == "THE BOLD FONT (FREE VERSION)"
+
+
+def test_extend_keep_ranges_finishes_nearby_sentence(tmp_path):
+    video_path = tmp_path / "source.mp4"
+    video_path.with_suffix(".transcript_cache.json").write_text(
+        """
+        {
+          "version": 2,
+          "words": [
+            {"text": "One", "start": 15440, "end": 15760, "confidence": 0.99},
+            {"text": "has", "start": 15760, "end": 16040, "confidence": 0.99},
+            {"text": "depression", "start": 16040, "end": 16520, "confidence": 0.99},
+            {"text": "and", "start": 16520, "end": 16680, "confidence": 0.99},
+            {"text": "the", "start": 16680, "end": 16840, "confidence": 0.99},
+            {"text": "other", "start": 16840, "end": 17080, "confidence": 0.99},
+            {"text": "has", "start": 17080, "end": 17320, "confidence": 0.99},
+            {"text": "anger", "start": 17320, "end": 17680, "confidence": 0.99},
+            {"text": "issues.", "start": 17680, "end": 18000, "confidence": 0.99}
+          ],
+          "utterances": [],
+          "text": "One has depression and the other has anger issues."
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    with patch("src.video_utils.ffprobe_duration", return_value=60.0):
+        ranges = video_utils.extend_keep_ranges_to_sentence_boundary(
+            video_path,
+            [(0.0, 16.0)],
+        )
+
+    assert ranges[0][0] == 0.0
+    assert ranges[0][1] == pytest.approx(18.35)
+
+
+def test_burn_ass_subtitles_passes_fontsdir_to_ffmpeg(tmp_path):
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, timeout=900):
+        commands.append(command)
+        return Result()
+
+    with patch("src.video_utils.run_ffmpeg_command", side_effect=fake_run):
+        success = video_utils.burn_ass_subtitles_ffmpeg(
+            tmp_path / "input.mp4",
+            tmp_path / "captions.ass",
+            tmp_path / "output.mp4",
+            fonts_dir=tmp_path / "fonts",
+        )
+
+    assert success is True
+    video_filter = commands[0][commands[0].index("-vf") + 1]
+    assert "fontsdir=" in video_filter
+    assert video_filter.endswith(",setsar=1")
+
+
+def test_ass_font_name_uses_internal_font_family_for_libass():
+    assert video_utils.ass_font_name("THEBOLDFONT") == "THE BOLD FONT (FREE VERSION)"
+
+
+def test_burn_ass_subtitles_passes_selected_fonts_dir(tmp_path):
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, timeout=900):
+        commands.append(command)
+        return Result()
+
+    with patch("src.video_utils.run_ffmpeg_command", side_effect=fake_run):
+        success = video_utils.burn_ass_subtitles_ffmpeg(
+            tmp_path / "input.mp4",
+            tmp_path / "captions.ass",
+            tmp_path / "output.mp4",
+            tmp_path / "fonts",
+        )
+
+    assert success is True
+    video_filter = commands[0][commands[0].index("-vf") + 1]
+    assert f"fontsdir={tmp_path / 'fonts'}" in video_filter
+    assert video_filter.endswith(",setsar=1")
+
+
+def test_build_clip_signal_summary_surfaces_hook_and_audio_peak(monkeypatch, tmp_path):
+    transcript = "\n".join(
+        [
+            "[00:00 - 00:04] Speaker A: This is normal setup",
+            "[00:05 - 00:08] Speaker B: Wait what happened?",
+            "[00:08 - 00:12] Speaker A: Nobody expected the result!",
+        ]
+    )
+    monkeypatch.setattr(video_utils, "detect_audio_peak_times", lambda _path: [6.0])
+
+    summary = video_utils.build_clip_signal_summary(tmp_path / "source.mp4", transcript)
+
+    assert "Wait what happened?" in summary
+    assert "audio energy peak" in summary
+    assert "question/hook" in summary
+
+
+def test_build_speaker_timeline_from_transcript_projects_utterances_to_clip():
+    transcript_data = {
+        "utterances": [
+            {"text": "left turn", "start": 2000, "end": 3500, "speaker": "A"},
+            {"text": "right turn", "start": 3500, "end": 5500, "speaker": "B"},
+            {"text": "left again", "start": 5500, "end": 7000, "speaker": "A"},
+        ]
+    }
+
+    timeline = video_utils.build_speaker_timeline_from_transcript(
+        transcript_data, [(2.0, 7.0)]
+    )
+
+    assert len(timeline) >= 2
+    assert timeline[0]["start"] == pytest.approx(0.0)
+    assert timeline[0]["end"] == pytest.approx(1.5)
+    assert timeline[0]["speaker"] == "A"
+    assert timeline[1]["speaker"] == "B"
+    assert timeline[2]["speaker"] == "A"
+
+
+def test_build_speaker_timeline_from_transcript_handles_offsets_and_crossfade():
+    transcript_data = {
+        "utterances": [
+            {"text": "one", "start": 2000, "end": 3500, "speaker": "A"},
+            {"text": "two", "start": 3500, "end": 5500, "speaker": "B"},
+        ]
+    }
+
+    timeline = video_utils.build_speaker_timeline_from_transcript(
+        transcript_data, [(1.0, 5.0), (8.0, 12.0)]
+    )
+
+    assert len(timeline) == 2
+    assert timeline[0]["speaker"] == "A"
+    assert timeline[0]["start"] == pytest.approx(1.0)
+    assert timeline[0]["end"] == pytest.approx(2.5)
+    assert timeline[1]["speaker"] == "B"
+    assert timeline[1]["start"] == pytest.approx(2.5)
+    assert timeline[1]["end"] == pytest.approx(4.0)
+
+
+def test_build_speaker_timeline_from_transcript_needs_two_speakers():
+    transcript_data = {
+        "utterances": [
+            {"text": "solo", "start": 0, "end": 3000, "speaker": "A"},
+            {"text": "solo two", "start": 3000, "end": 6000, "speaker": "A"},
+        ]
+    }
+
+    timeline = video_utils.build_speaker_timeline_from_transcript(
+        transcript_data, [(0.0, 6.0)]
+    )
+
+    assert timeline == []
+
+
+def test_assign_speaker_sides_maps_labels_to_left_right_by_motion():
+    timeline = [
+        {"start": 0.0, "end": 3.0, "speaker": "A"},
+        {"start": 3.0, "end": 6.0, "speaker": "B"},
+        {"start": 6.0, "end": 9.0, "speaker": "A"},
+    ]
+    times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    left_values = [1.0, 1.0, 1.0, 0.1, 0.1, 0.1, 1.0, 1.0, 1.0]
+    right_values = [0.1, 0.1, 0.1, 1.0, 1.0, 1.0, 0.1, 0.1, 0.1]
+
+    sides = video_utils.assign_speaker_sides(
+        timeline, times, left_values, right_values
+    )
+
+    assert sides == {"A": "left", "B": "right"}
+
+
+def test_assign_speaker_sides_returns_empty_with_weak_signal():
+    timeline = [{"start": 0.0, "end": 3.0, "speaker": "A"}]
+    times = [0.0, 1.0, 2.0]
+    left_values = [1.0, 1.0, 1.0]
+    right_values = [1.0, 1.0, 1.0]
+
+    assert video_utils.assign_speaker_sides(timeline, times, left_values, right_values) == {}
+
+
+def test_detect_speaker_reframe_plan_prefers_diarized_speakers(tmp_path):
+    clip_path = tmp_path / "clip.mp4"
+
+    transcript_data = {
+        "utterances": [
+            {"text": "one", "start": 0, "end": 3000, "speaker": "A"},
+            {"text": "two", "start": 3000, "end": 6000, "speaker": "B"},
+            {"text": "three", "start": 6000, "end": 9000, "speaker": "A"},
+        ]
+    }
+    regions = {
+        "left": {
+            "center_x": 270,
+            "center_y": 500,
+            "roi_x": 10,
+            "roi_y": 100,
+            "roi_w": 200,
+            "roi_h": 200,
+            "tile_x": 10,
+            "tile_y": 100,
+            "tile_w": 300,
+            "tile_h": 300,
+        },
+        "right": {
+            "center_x": 810,
+            "center_y": 500,
+            "roi_x": 600,
+            "roi_y": 100,
+            "roi_w": 200,
+            "roi_h": 200,
+            "tile_x": 600,
+            "tile_y": 100,
+            "tile_w": 300,
+            "tile_h": 300,
+        },
+    }
+    motion_times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    # Speaker A (left) moves during its turns; B is static. Left dominance
+    # during A's windows should map A->left.
+    left_values = [2.0, 2.0, 2.0, 0.2, 0.2, 0.2, 2.0, 2.0, 2.0]
+    right_values = [0.2, 0.2, 0.2, 2.0, 2.0, 2.0, 0.2, 0.2, 0.2]
+
+    class Result:
+        returncode = 0
+
+    with (
+        patch("src.video_utils.ffprobe_video_size", return_value=(1920, 1080)),
+        patch("src.video_utils.count_scene_cuts", return_value=0),
+        patch("src.video_utils.ffprobe_duration", return_value=9.0),
+        patch(
+            "src.video_utils.detect_faces_in_clip",
+            return_value=[
+                (270, 500, 16000, 0.95),
+                (810, 500, 16000, 0.95),
+                (270, 500, 16000, 0.95),
+                (810, 500, 16000, 0.95),
+                (270, 500, 16000, 0.95),
+                (810, 500, 16000, 0.95),
+            ],
+        ),
+        patch("src.video_utils.cluster_two_face_regions", return_value=regions),
+        patch("src.video_utils.run_ffmpeg_command", return_value=Result()),
+        patch(
+            "src.video_utils.parse_motion_metadata",
+            side_effect=[(motion_times, left_values), (motion_times, right_values)],
+        ),
+    ):
+        plan = video_utils.detect_speaker_reframe_plan(
+            clip_path,
+            "vertical_pan",
+            transcript_data=transcript_data,
+            keep_ranges=[(0.0, 9.0)],
+        )
+
+    assert plan is not None
+    assert plan["mode"] == "pan"
+    timeline = plan["timeline"]
+    assert timeline[0]["speaker"] == "left"
+    assert timeline[1]["speaker"] == "right"
+    assert timeline[2]["speaker"] == "left"

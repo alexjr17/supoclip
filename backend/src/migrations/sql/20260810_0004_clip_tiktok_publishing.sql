@@ -1,0 +1,6 @@
+ALTER TABLE generated_clips
+    ADD COLUMN IF NOT EXISTS tiktok_publish_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS tiktok_publish_status VARCHAR(20) NOT NULL DEFAULT 'none',
+    ADD COLUMN IF NOT EXISTS tiktok_scheduled_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS tiktok_published_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS tiktok_publish_error TEXT;

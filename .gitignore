@@ -1,0 +1,37 @@
+.env
+.env.local
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.coverage
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Python
+.venv/
+
+# Runtime / scratch
+logs/
+temp/
+uploads/
+*.m4a
+frontend/e2e/.seed.json
+._emoji_verify
+
+# local demo / scratch artifacts
+backend/demo_clips/
+backend/demo_clips_*.log
+backend/run_demo.py
+backend/cookies.txt
+backend/temp_tiktok_font_urls.css
+_emoji_verify/
