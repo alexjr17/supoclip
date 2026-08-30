@@ -23,7 +23,7 @@ import httpx
 import srt
 from datetime import timedelta
 
-from . import screencast_layout
+from . import panel_layout, screencast_layout
 from .config import get_config
 from .clip_cleanup import DEFAULT_FILTERED_WORDS, clip_cleanup_enabled
 from .clip_source_map import (
@@ -48,6 +48,7 @@ VALID_OUTPUT_FORMATS = {
     "vertical_pan",
     "vertical_split",
     "vertical_screencast",
+    "vertical_panel",
     "original",
 }
 # Family name of the bundled colour-emoji font (fonts/NotoColorEmoji.ttf). We
@@ -2866,6 +2867,38 @@ def render_reframed_clip_ffmpeg(
             str(output_path),
         ]
         return run_ffmpeg_command(command).returncode == 0, out_w, out_h
+
+    if output_format == "vertical_panel":
+        # Three or four people from one wide shot, tiled 2x2. Faces are sampled
+        # once and clustered by horizontal position, which separates people
+        # without tracking identity across frames.
+        face_centers = detect_faces_in_clip(
+            input_path, 0, min(ffprobe_duration(input_path), 12.0)
+        )
+        people = panel_layout.cluster_people(
+            [(center[0], center[1]) for center in face_centers], width
+        )
+        if panel_layout.is_suitable(width, height, len(people)):
+            video_filter = panel_layout.build_panel_filtergraph(
+                width, height, people, subtitles_filter=subs
+            )
+            command = [
+                "ffmpeg", "-y", "-i", str(input_path),
+                "-filter_complex", video_filter,
+                "-map", "[v]", "-map", "0:a?",
+                *build_final_video_encode_args(),
+                *audio_args,
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+            return run_ffmpeg_command(command).returncode == 0, 1080, 1920
+
+        logger.info(
+            "Panel layout needs %s-%s people on a landscape source; found %s. Using the default crop.",
+            panel_layout.MIN_PEOPLE,
+            panel_layout.MAX_PEOPLE,
+            len(people),
+        )
 
     if output_format == "vertical_screencast":
         # Full-width content above a face-framed presenter. Chosen explicitly by
