@@ -28,6 +28,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EdlEditorPanel } from "./_components/edl-editor-panel";
+import { FaithfulPreview } from "./_components/faithful-preview";
 
 interface TaskDetails {
   id: string;
@@ -131,6 +132,9 @@ export default function TaskEditPage() {
   const [projectFontColor, setProjectFontColor] = useState<string | null>(null);
   const [projectCaptionTemplate, setProjectCaptionTemplate] = useState("default");
 
+  // The <video> preview drives the editing controls (playhead, trim, split);
+  // the Remotion one shows what the export will actually look like.
+  const [previewMode, setPreviewMode] = useState<"edit" | "faithful">("edit");
   const [exportPreset, setExportPreset] = useState("tiktok");
   const [exportProgress, setExportProgress] = useState<number | null>(null);
 
@@ -679,7 +683,51 @@ export default function TaskEditPage() {
                 <CardContent className="p-4 lg:p-5 space-y-4">
                   {selectedClip ? (
                     <>
-                      <div className="rounded-xl bg-black overflow-hidden relative">
+                      <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewMode("edit")}
+                          className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                            previewMode === "edit"
+                              ? "bg-white text-black shadow-sm"
+                              : "text-gray-600 hover:text-black"
+                          }`}
+                        >
+                          <span>Editing</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewMode("faithful")}
+                          className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                            previewMode === "faithful"
+                              ? "bg-white text-black shadow-sm"
+                              : "text-gray-600 hover:text-black"
+                          }`}
+                        >
+                          <span>True preview</span>
+                        </button>
+                      </div>
+
+                      {previewMode === "faithful" && task ? (
+                        <FaithfulPreview
+                          taskId={task.id}
+                          clipId={selectedClip.id}
+                          videoSrc={getClipUrl(selectedClip.video_url)}
+                          durationSeconds={selectedClip.duration}
+                          clipText={selectedClip.text || captionText}
+                          showEmojis={projectShowEmojis}
+                          hookTitle={null}
+                          subtitleSize={subtitleSize}
+                          subtitleYPercent={subtitleY}
+                          fontColor={projectFontColor}
+                          fontFamily={task.font_family ?? null}
+                        />
+                      ) : null}
+
+                      <div
+                        className="rounded-xl bg-black overflow-hidden relative"
+                        style={{ display: previewMode === "edit" ? undefined : "none" }}
+                      >
                         <video
                           ref={videoRef}
                           key={selectedClip.id}
