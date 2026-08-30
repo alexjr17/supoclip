@@ -17,6 +17,7 @@ import secrets
 from ...database import get_db
 from ...database import AsyncSessionLocal
 from ...services.task_service import TaskService
+from ...services.edl_service import EdlError, EdlService
 from ...services.billing_service import BillingService, BillingLimitExceeded
 from ...auth_headers import resolve_authenticated_user_id
 from ...workers.job_queue import JobQueue
@@ -731,6 +732,68 @@ async def trim_clip(
     except Exception as e:
         logger.error(f"Error trimming clip: {e}")
         raise HTTPException(status_code=500, detail=f"Error trimming clip: {str(e)}")
+
+
+@router.get("/{task_id}/clips/{clip_id}/edl")
+async def get_clip_edl(
+    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """
+    Return the clip's edit decision list: which source ranges it was cut from,
+    plus the source duration and word timings the editor snaps to.
+    """
+    try:
+        task_service = TaskService(db)
+        await _require_task_owner(request, task_service, db, task_id)
+
+        edl_service = EdlService(db, task_service.video_service)
+        return await edl_service.get_edl(task_id, clip_id)
+    except EdlError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading clip EDL: {e}")
+        raise HTTPException(status_code=500, detail=f"Error loading clip EDL: {str(e)}")
+
+
+@router.post("/{task_id}/clips/{clip_id}/rerender")
+async def rerender_clip(
+    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """
+    Re-render a clip from an edited EDL.
+
+    Unlike trim/split, this always renders from the source video, so segments
+    can be extended as well as shortened and the output never accumulates
+    re-encoding loss.
+    """
+    try:
+        payload = await request.json()
+        segments = payload.get("segments")
+        if not isinstance(segments, list):
+            raise HTTPException(status_code=400, detail="segments must be a list")
+
+        task_service = TaskService(db)
+        await _require_task_owner(request, task_service, db, task_id)
+
+        style = await task_service._load_task_source_settings(task_id)
+        style["cleanup_settings"] = normalize_clip_cleanup_settings(
+            style.get("cut_long_pauses"),
+            style.get("pause_threshold_ms"),
+            style.get("remove_filler_words"),
+            style.get("filtered_words"),
+        )
+
+        edl_service = EdlService(db, task_service.video_service)
+        return await edl_service.rerender(task_id, clip_id, segments, style)
+    except EdlError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error re-rendering clip: {e}")
+        raise HTTPException(status_code=500, detail=f"Error re-rendering clip: {str(e)}")
 
 
 @router.post("/{task_id}/clips/{clip_id}/split")

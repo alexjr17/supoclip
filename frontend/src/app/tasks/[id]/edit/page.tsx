@@ -27,6 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EdlEditorPanel } from "./_components/edl-editor-panel";
 
 interface TaskDetails {
   id: string;
@@ -738,6 +739,15 @@ export default function TaskEditPage() {
                           <Button variant="outline" size="sm" onClick={setTrimOutToPlayhead}>Set Out</Button>
                         </div>
                       </div>
+
+                      {/* Non-destructive editing against the source video. The
+                          Trim Range controls below still cut the rendered file
+                          and remain for clips with no source map. */}
+                      <EdlEditorPanel
+                        taskId={task.id}
+                        clipId={selectedClip.id}
+                        onRendered={fetchEditorData}
+                      />
 
                       <div className="border rounded-lg p-3 space-y-3">
                         <div className="flex items-center justify-between text-sm text-gray-700">

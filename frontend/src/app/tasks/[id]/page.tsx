@@ -1142,7 +1142,7 @@ export default function TaskPage() {
                       ) : (
                         <Youtube className="w-4 h-4" />
                       )}
-                      Upload all to YouTube
+                      <span>Upload all to YouTube</span>
                     </Button>
                     <Button
                       size="sm"
@@ -1156,7 +1156,7 @@ export default function TaskPage() {
                       ) : (
                         <Zap className="w-4 h-4" />
                       )}
-                      Publish today
+                      <span>Publish today</span>
                     </Button>
                     <Button
                       size="sm"
@@ -1169,7 +1169,7 @@ export default function TaskPage() {
                       ) : (
                         <RefreshCw className="w-4 h-4" />
                       )}
-                      Sync with YouTube
+                      <span>Sync with YouTube</span>
                     </Button>
                   </>
                 )}
@@ -1195,7 +1195,7 @@ export default function TaskPage() {
                       ) : (
                         <Music2 className="w-4 h-4" />
                       )}
-                      Upload all to TikTok
+                      <span>Upload all to TikTok</span>
                     </Button>
                     <Button
                       size="sm"
@@ -1209,7 +1209,7 @@ export default function TaskPage() {
                       ) : (
                         <Zap className="w-4 h-4" />
                       )}
-                      Publish TikTok today
+                      <span>Publish TikTok today</span>
                     </Button>
                     <Button
                       size="sm"
@@ -1223,7 +1223,7 @@ export default function TaskPage() {
                       ) : (
                         <RefreshCw className="w-4 h-4" />
                       )}
-                      Sync with TikTok
+                      <span>Sync with TikTok</span>
                     </Button>
                   </>
                 )}

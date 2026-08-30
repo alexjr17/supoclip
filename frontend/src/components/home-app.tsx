@@ -21,6 +21,7 @@ import Image from "next/image";
 import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, Paintbrush, Film, Sparkles, Upload, Monitor, Menu, X, LogOut, List, Shield, Settings } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ProfileSwitcher } from "@/components/profile-switcher";
+import { CustomFontFaces } from "@/components/custom-font-faces";
 
 interface LatestTask {
   id: string;
@@ -254,28 +255,8 @@ export default function HomeApp() {
       const fonts: FontOption[] = data.fonts || [];
       setAvailableFonts(fonts);
 
-      const fontFaceStyles = fonts.map((font) => {
-        const format = font.format === "otf" ? "opentype" : "truetype";
-        return `
-          @font-face {
-            font-family: '${font.name}';
-            src: url('/api/fonts/${font.name}') format('${format}');
-            font-weight: normal;
-            font-style: normal;
-          }
-        `;
-      }).join("\n");
-
-      const styleElement = document.createElement("style");
-      styleElement.id = "custom-fonts";
-      styleElement.innerHTML = fontFaceStyles;
-
-      const existingStyle = document.getElementById("custom-fonts");
-      if (existingStyle) {
-        existingStyle.remove();
-      }
-
-      document.head.appendChild(styleElement);
+      // The @font-face declarations are rendered by <CustomFontFaces /> so
+      // React owns that <style> node instead of us mutating <head> directly.
     } catch (error) {
       console.error("Failed to load fonts:", error);
       setFontLoadError("Could not load fonts right now.");
@@ -592,6 +573,7 @@ export default function HomeApp() {
 
   return (
     <div className="min-h-screen bg-white">
+      <CustomFontFaces fonts={availableFonts} />
       {/* Header */}
       <div className="border-b bg-white relative">
         <div className="max-w-7xl mx-auto px-4 py-4">

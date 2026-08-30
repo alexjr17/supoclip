@@ -17,6 +17,13 @@ services:
         - NEXT_PUBLIC_DATAFAST_DOMAIN=${NEXT_PUBLIC_DATAFAST_DOMAIN:-}
         - NEXT_PUBLIC_DATAFAST_ALLOW_LOCALHOST=${NEXT_PUBLIC_DATAFAST_ALLOW_LOCALHOST:-false}
     container_name: supoclip-frontend
+    # `pnpm run dev` uses --turbopack, whose file watcher ignores
+    # WATCHPACK_POLLING and never sees edits arriving through a Windows/macOS
+    # bind mount. Webpack's watcher does honour polling, so dev in Docker runs
+    # without Turbopack to keep hot reload working. Native `pnpm run dev`
+    # outside Docker still uses Turbopack.
+    command:
+      ["sh", "-c", "pnpm exec prisma generate && pnpm exec next dev --port 3107"]
     ports:
       - "127.0.0.1:3001:3107"
     volumes:
@@ -26,6 +33,11 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - NEXT_TELEMETRY_DISABLED=1
+      # Bind mounts from a Windows/macOS host do not forward inotify events into
+      # the container, so the dev server never sees edits to ./frontend/src.
+      # Polling trades a little CPU for hot reload actually working.
+      - WATCHPACK_POLLING=${WATCHPACK_POLLING:-true}
+      - CHOKIDAR_USEPOLLING=${WATCHPACK_POLLING:-true}
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - BACKEND_INTERNAL_URL=http://backend:8000
       - NEXT_PUBLIC_SELF_HOST=${SELF_HOST:-true}
@@ -80,7 +92,7 @@ services:
     platform: linux/amd64
     command: [".venv/bin/uvicorn", "src.main_refactored:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend/src:/app/src
       - uploads:/app/uploads
