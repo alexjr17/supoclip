@@ -23,6 +23,7 @@ import httpx
 import srt
 from datetime import timedelta
 
+from . import screencast_layout
 from .config import get_config
 from .clip_cleanup import DEFAULT_FILTERED_WORDS, clip_cleanup_enabled
 from .clip_source_map import (
@@ -42,7 +43,13 @@ from .font_registry import FONTS_DIR, find_font_path, get_font_family_name
 
 logger = logging.getLogger(__name__)
 TRANSCRIPT_CACHE_SCHEMA_VERSION = 2
-VALID_OUTPUT_FORMATS = {"vertical", "vertical_pan", "vertical_split", "original"}
+VALID_OUTPUT_FORMATS = {
+    "vertical",
+    "vertical_pan",
+    "vertical_split",
+    "vertical_screencast",
+    "original",
+}
 # Family name of the bundled colour-emoji font (fonts/NotoColorEmoji.ttf). We
 # force it explicitly per-emoji via an ASS \fn override so libass renders colour
 # emojis reliably instead of depending on automatic Unicode font fallback.
@@ -2859,6 +2866,37 @@ def render_reframed_clip_ffmpeg(
             str(output_path),
         ]
         return run_ffmpeg_command(command).returncode == 0, out_w, out_h
+
+    if output_format == "vertical_screencast":
+        # Full-width content above a face-framed presenter. Chosen explicitly by
+        # the user, so the only check here is that the geometry works at all;
+        # a source too close to vertical falls through to the normal crop.
+        if screencast_layout.is_suitable(width, height):
+            face_centers = detect_faces_in_clip(
+                input_path, 0, min(ffprobe_duration(input_path), 12.0)
+            )
+            face_center = screencast_layout.resolve_face_center(
+                [(center[0], center[1]) for center in face_centers], width, height
+            )
+            video_filter = screencast_layout.build_screencast_filtergraph(
+                width, height, face_center, subtitles_filter=subs
+            )
+            command = [
+                "ffmpeg", "-y", "-i", str(input_path),
+                "-filter_complex", video_filter,
+                "-map", "[v]", "-map", "0:a?",
+                *build_final_video_encode_args(),
+                *audio_args,
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+            return run_ffmpeg_command(command).returncode == 0, 1080, 1920
+
+        logger.info(
+            "Screencast layout not suitable for %dx%d source; using the default crop",
+            width,
+            height,
+        )
 
     plan = (
         detect_speaker_reframe_plan(
