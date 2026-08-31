@@ -7,7 +7,8 @@ result before any video work starts.
 """
 
 import logging
-from typing import List
+from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -23,7 +24,7 @@ from ...script_ai import (
     ScriptTone,
     generate_video_script,
 )
-from ...services import stock_footage_service
+from ...services import stock_footage_service, tts_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scripts", tags=["scripts"])
@@ -88,6 +89,74 @@ async def find_footage(
     return {
         "scenes": results,
         "scenes_without_footage": stock_footage_service.missing_scene_orders(results),
+    }
+
+
+class NarrateScene(BaseModel):
+    order: int = 1
+    narration: str = ""
+    duration_seconds: float = 0.0
+
+
+class NarrateRequest(BaseModel):
+    scenes: List[NarrateScene] = Field(min_length=1, max_length=MAX_SCENES)
+    language: str = Field(default="English", max_length=40)
+    gender: str = Field(default="female", pattern="^(female|male)$")
+    voice: Optional[str] = Field(default=None, max_length=80)
+
+
+@router.get("/voices")
+async def list_voices(language: str = "English"):
+    """Voices available for a language, for the narration picker."""
+    try:
+        return {"voices": await tts_service.list_voices_for_language(language)}
+    except Exception as error:
+        logger.exception("Listing voices failed")
+        raise HTTPException(status_code=502, detail="Could not list voices") from error
+
+
+@router.post("/narrate")
+async def narrate_script(
+    payload: NarrateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Synthesise the narration for each scene and re-time the script from it.
+
+    The script's own durations are a word-count estimate and run long — measured
+    against real narration they were off by more than double. The response
+    carries the measured duration per scene plus word-level timings from the
+    synthesiser, which is what lets captions land on the word.
+    """
+    user_id = await resolve_authenticated_user_id(request, db, get_config())
+
+    output_dir = (
+        Path(get_config().temp_dir) / "narration" / str(user_id)
+    )
+
+    try:
+        results = await tts_service.narrate_scenes(
+            [scene.model_dump() for scene in payload.scenes],
+            output_dir,
+            language=payload.language,
+            gender=payload.gender,
+            voice=payload.voice,
+        )
+    except Exception as error:
+        logger.exception("Narration failed")
+        raise HTTPException(status_code=502, detail="Narration failed") from error
+
+    scenes = [scene.model_dump() for scene in payload.scenes]
+
+    return {
+        "scenes": [
+            # The audio path stays server-side; the client only needs timing.
+            {key: value for key, value in result.items() if key != "audio_path"}
+            for result in results
+        ],
+        "total_duration": tts_service.total_narrated_duration(results),
+        "retimed_scenes": tts_service.retimed_scenes(scenes, results),
     }
 
 

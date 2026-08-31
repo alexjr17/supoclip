@@ -33,6 +33,7 @@ dependencies = [
     "cryptography>=42.0.0",
     "fonttools>=4.0.0",
     "uharfbuzz>=0.40.0",
+    "edge-tts>=7.2.8",
 ]
 
 [dependency-groups]
