@@ -23,7 +23,7 @@ import httpx
 import srt
 from datetime import timedelta
 
-from . import panel_layout, screencast_layout
+from . import camera_inset_layout, panel_layout, screencast_layout
 from .config import get_config
 from .clip_cleanup import DEFAULT_FILTERED_WORDS, clip_cleanup_enabled
 from .clip_source_map import (
@@ -49,6 +49,7 @@ VALID_OUTPUT_FORMATS = {
     "vertical_split",
     "vertical_screencast",
     "vertical_panel",
+    "vertical_camera_inset",
     "original",
 }
 # Family name of the bundled colour-emoji font (fonts/NotoColorEmoji.ttf). We
@@ -2867,6 +2868,35 @@ def render_reframed_clip_ffmpeg(
             str(output_path),
         ]
         return run_ffmpeg_command(command).returncode == 0, out_w, out_h
+
+    if output_format == "vertical_camera_inset":
+        # A screen recording with the presenter composited into a corner. The
+        # detector reports centres and areas, so each is rebuilt into a
+        # rectangle before the corner test.
+        detections = detect_faces_in_clip(
+            input_path, 0, min(ffprobe_duration(input_path), 12.0)
+        )
+        boxes = [
+            camera_inset_layout.box_from_center_and_area(center[0], center[1], center[2])
+            for center in detections
+        ]
+        inset = camera_inset_layout.resolve_inset(boxes, width, height)
+        if inset is not None:
+            video_filter = camera_inset_layout.build_inset_filtergraph(
+                width, height, inset, subtitles_filter=subs
+            )
+            command = [
+                "ffmpeg", "-y", "-i", str(input_path),
+                "-filter_complex", video_filter,
+                "-map", "[v]", "-map", "0:a?",
+                *build_final_video_encode_args(),
+                *audio_args,
+                "-movflags", "+faststart",
+                str(output_path),
+            ]
+            return run_ffmpeg_command(command).returncode == 0, 1080, 1920
+
+        logger.info("No usable webcam inset found; using the default crop")
 
     if output_format == "vertical_panel":
         # Three or four people from one wide shot, tiled 2x2. Faces are sampled

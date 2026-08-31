@@ -56,6 +56,7 @@ type OutputFormat =
   | "vertical_split"
   | "vertical_screencast"
   | "vertical_panel"
+  | "vertical_camera_inset"
   | "original";
 
 const MAX_VIDEO_UPLOAD_BYTES = 5_000_000_000;
@@ -1031,6 +1032,7 @@ export default function HomeApp() {
                         <SelectItem value="vertical_split">Split-screen</SelectItem>
                         <SelectItem value="vertical_screencast">Screen + presenter</SelectItem>
                         <SelectItem value="vertical_panel">Panel (3-4 people)</SelectItem>
+                        <SelectItem value="vertical_camera_inset">Screen + webcam corner</SelectItem>
                         <SelectItem value="original">Original</SelectItem>
                       </SelectContent>
                     </Select>
