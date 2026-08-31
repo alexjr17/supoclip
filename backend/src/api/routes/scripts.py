@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from ...script_ai import (
     generate_video_script,
 )
 from ...services import stock_footage_service, tts_service
+from ...services.generated_video_service import DEFAULT_TITLE, GeneratedVideoService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scripts", tags=["scripts"])
@@ -168,6 +169,46 @@ async def narrate_script(
         # needed to re-time a script the caller already holds.
         "total_duration": tts_service.total_narrated_duration(results),
     }
+
+
+@router.post("/save-video")
+async def save_generated_video(
+    request: Request,
+    file: UploadFile = File(...),
+    title: str = Form(DEFAULT_TITLE),
+    duration: float = Form(0.0),
+    text_content: str = Form(""),
+    hook_title: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Store a rendered generated video so it can be published like any clip.
+
+    It lands as a completed task with kind='generated' holding one clip, so the
+    listing, the task page, scheduling and the YouTube/TikTok publishers all
+    work on it unchanged.
+    """
+    user_id = await resolve_authenticated_user_id(request, db, get_config())
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+
+    try:
+        service = GeneratedVideoService(db)
+        return await service.save(
+            user_id,
+            data,
+            title=title,
+            duration=duration,
+            text_content=text_content,
+            hook_title=hook_title or None,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Saving the generated video failed")
+        raise HTTPException(status_code=500, detail="Could not save the video") from error
 
 
 @router.get("/narration/{filename}")

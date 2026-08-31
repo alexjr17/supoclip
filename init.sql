@@ -36,7 +36,10 @@ CREATE TABLE users (
 -- Source table (created before tasks since tasks reference sources)
 CREATE TABLE sources (
     id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    type VARCHAR(20) CHECK (type IN ('youtube', 'video_url')) NOT NULL,
+    -- 'generated' has no URL: the source is the AI-written script, and the
+    -- row exists so the video carries a title through the listing like any
+    -- other task.
+    type VARCHAR(20) CHECK (type IN ('youtube', 'video_url', 'generated')) NOT NULL,
     title VARCHAR(500) NOT NULL,
     url VARCHAR(1000),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -50,6 +53,11 @@ CREATE TABLE tasks (
     source_id VARCHAR(36) REFERENCES sources(id) ON DELETE SET NULL,
     generated_clips_ids VARCHAR(36)[], -- Array of clip IDs
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
+
+    -- How this task's clips came to exist: cut from a source video, or
+    -- assembled from an AI-written script. Both end up in the same list and
+    -- publish through the same path, so they share a table.
+    kind VARCHAR(20) NOT NULL DEFAULT 'clip' CHECK (kind IN ('clip', 'generated')),
 
     -- Progress tracking fields
     progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),

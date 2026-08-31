@@ -40,11 +40,47 @@ async function fetchNarrationDataUrl(
   }
 }
 
+/**
+ * Store the finished video as a task so it can be published later.
+ *
+ * Returns null on failure rather than throwing: the render succeeded, and
+ * losing the download because the library write failed would be the worse
+ * outcome.
+ */
+async function saveToLibrary(
+  userId: string,
+  file: Buffer,
+  meta: { title?: string; duration: number },
+): Promise<{ task_id: string } | null> {
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(file)], { type: "video/mp4" }), "generated.mp4");
+    form.append("title", meta.title?.slice(0, 200) || "AI generated video");
+    form.append("duration", String(meta.duration));
+
+    const upstream = await fetchBackend("/scripts/save-video", {
+      method: "POST",
+      userId,
+      body: form,
+    });
+
+    if (!upstream.ok) {
+      console.error("Saving the generated video failed:", upstream.status);
+      return null;
+    }
+    return await upstream.json();
+  } catch (error) {
+    console.error("Saving the generated video failed:", error);
+    return null;
+  }
+}
+
 interface IncomingScene {
   order?: number;
   videoSrc?: string;
   audioFilename?: string;
   durationInSeconds?: number;
+  sourceDurationInSeconds?: number;
   captions?: unknown;
 }
 
@@ -62,7 +98,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let payload: { scenes?: IncomingScene[]; style?: Record<string, unknown> };
+  let payload: {
+    scenes?: IncomingScene[];
+    style?: Record<string, unknown>;
+    title?: string;
+  };
   try {
     payload = await request.json();
   } catch {
@@ -89,6 +129,7 @@ export async function POST(request: Request) {
         ? await fetchNarrationDataUrl(session.user.id, scene.audioFilename)
         : "",
       durationInSeconds: scene.durationInSeconds ?? 0,
+      sourceDurationInSeconds: scene.sourceDurationInSeconds,
       captions: Array.isArray(scene.captions) ? scene.captions : [],
     })),
   );
@@ -114,12 +155,23 @@ export async function POST(request: Request) {
 
     const file = await fs.readFile(rendered.outputPath);
 
+    // Keep it in the platform as well as handing it back. A generated video is
+    // saved as a completed task so it appears in the listing and can be
+    // scheduled and published exactly like a clipped one. A failure here is
+    // logged but not fatal: the user still gets their download.
+    const saved = await saveToLibrary(session.user.id, file, {
+      title: typeof payload.title === "string" ? payload.title : undefined,
+      duration: usable.reduce((total, scene) => total + scene.durationInSeconds, 0),
+    });
+
     return new Response(new Uint8Array(file), {
       status: 200,
       headers: {
         "Content-Type": "video/mp4",
         "Content-Disposition": 'attachment; filename="generated.mp4"',
         "Content-Length": String(file.byteLength),
+        // Lets the client link straight to the saved video.
+        ...(saved ? { "x-supoclip-task-id": saved.task_id } : {}),
       },
     });
   } catch (error) {

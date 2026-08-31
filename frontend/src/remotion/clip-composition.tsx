@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, Video } from "remotion";
+import { AbsoluteFill, OffthreadVideo } from "remotion";
 
 import { HookOverlay } from "./hook-overlay";
 import { Subtitles } from "./subtitles";
@@ -20,18 +20,21 @@ export function ClipComposition({
   style,
   hook,
 }: Omit<ClipCompositionProps, "durationInFrames" | "fps" | "width" | "height">) {
-  // OffthreadVideo is the accurate path for server rendering but needs a
-  // Node-side extractor; in the browser Player it is unavailable, so the
-  // plain Video tag is used there.
-  const VideoTag = typeof window === "undefined" ? OffthreadVideo : Video;
-
+  // OffthreadVideo always, never <Video>.
+  //
+  // The previous `typeof window === "undefined" ? OffthreadVideo : Video` was
+  // wrong: during a render the composition runs INSIDE headless Chrome, so
+  // `window` exists and <Video> was always chosen. <Video> depends on the HTML
+  // element seeking to the right position, which is not frame-accurate under
+  // render — frames get duplicated or skipped and the result visibly stutters.
+  // OffthreadVideo extracts the exact frame instead, and works in the Player.
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
       {/* An empty source renders on black rather than throwing: a caption-only
           render is a legitimate case, and a clip whose file is momentarily
           unreachable should not take the whole render down with it. */}
       {videoSrc ? (
-        <VideoTag
+        <OffthreadVideo
           src={videoSrc}
           style={{ width: "100%", height: "100%", objectFit: "contain" }}
         />

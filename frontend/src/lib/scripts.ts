@@ -202,21 +202,35 @@ export interface AssembleScene {
   videoSrc: string;
   audioFilename: string | null;
   durationInSeconds: number;
+  /** Stock clip length, so a clip shorter than the scene can be looped. */
+  sourceDurationInSeconds?: number;
   captions: Array<{ text: string; startMs: number; endMs: number; emoji?: string }>;
 }
 
-/** Renders the assembled video and returns it as a blob for download. */
-export async function assembleVideo(scenes: AssembleScene[]): Promise<Blob> {
+/**
+ * Renders the assembled video, returning the file and where it was saved.
+ *
+ * `taskId` is null when the render succeeded but storing it in the library did
+ * not — the download still works, it just is not listed for publishing.
+ */
+export async function assembleVideo(
+  scenes: AssembleScene[],
+  title?: string,
+): Promise<{ blob: Blob; taskId: string | null }> {
   const response = await fetch("/api/scripts/assemble", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scenes }),
+    body: JSON.stringify({ scenes, title }),
   });
 
   if (!response.ok) {
     throw new Error(formatSupportMessage(await parseApiError(response, "Assembly failed")));
   }
-  return response.blob();
+
+  return {
+    blob: await response.blob(),
+    taskId: response.headers.get("x-supoclip-task-id"),
+  };
 }
 
 /** Recomputes the total after the user edits scene durations by hand. */

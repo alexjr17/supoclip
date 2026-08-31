@@ -264,6 +264,7 @@ export default function GeneratePage() {
               narration={narration}
               selection={footageSelection}
               showEmojis
+              title={script.title}
             />
           </>
         )}

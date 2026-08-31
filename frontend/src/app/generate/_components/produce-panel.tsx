@@ -5,7 +5,8 @@ import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, Clapperboard, Download, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, CheckCircle, Clapperboard, Download, Loader2 } from "lucide-react";
 
 import {
   assembleVideo,
@@ -22,6 +23,8 @@ interface ProducePanelProps {
   /** Chosen stock clip per scene order, when the user overrode the default. */
   selection: Record<number, number>;
   showEmojis: boolean;
+  /** Used as the saved video's name in the library. */
+  title: string;
 }
 
 /**
@@ -37,9 +40,11 @@ export function ProducePanel({
   narration,
   selection,
   showEmojis,
+  title,
 }: ProducePanelProps) {
   const [isAssembling, setIsAssembling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedTaskId, setSavedTaskId] = useState<string | null>(null);
 
   const canAssemble = Boolean(narration && narration.scenes.some((s) => s.duration > 0));
 
@@ -69,12 +74,16 @@ export function ProducePanel({
             videoSrc: clip?.download_url ?? clip?.preview_url ?? "",
             audioFilename: scene.audio_filename,
             durationInSeconds: scene.duration,
+            // Pexels reports the clip's own length; a clip shorter than the
+            // scene is looped rather than freezing on its last frame.
+            sourceDurationInSeconds: clip?.duration,
             // Timings come from the synthesiser, so captions land on the word.
             captions: buildCaptions(scene.words, { showEmojis }),
           };
         });
 
-      const blob = await assembleVideo(payload);
+      const { blob, taskId } = await assembleVideo(payload, title);
+      setSavedTaskId(taskId);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -155,6 +164,19 @@ export function ProducePanel({
           <Alert className="border-red-200 bg-red-50">
             <AlertCircle className="h-4 w-4 text-red-500" />
             <AlertDescription className="text-sm text-red-700">{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {savedTaskId && (
+          <Alert className="border-green-200 bg-green-50">
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            <AlertDescription className="text-sm text-green-700">
+              Saved to your library — open{" "}
+              <Link href={`/tasks/${savedTaskId}`} className="font-medium underline">
+                the video
+              </Link>{" "}
+              to schedule or publish it to YouTube and TikTok.
+            </AlertDescription>
           </Alert>
         )}
 
