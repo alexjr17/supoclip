@@ -159,7 +159,10 @@ export function ProducePanel({
         )}
 
         <p className="text-xs text-gray-500">
-          Rendering happens on the server and takes about as long as the video itself. Scenes: {scenes.length}.
+          Rendering happens on the server and downloads each scene&apos;s stock clip first, so
+          expect several minutes for {scenes.length} scene{scenes.length === 1 ? "" : "s"} — well
+          longer than the video&apos;s own runtime. Leave the tab open; there is no progress bar
+          yet.
         </p>
       </CardContent>
     </Card>

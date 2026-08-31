@@ -110,6 +110,14 @@ export async function renderComposition(
     codec: "h264",
     outputLocation: outputPath,
     inputProps,
+    // Remotion defaults to one browser tab per core, and each tab pulls its
+    // scene's stock clip independently. Ten parallel HD downloads made Pexels
+    // drop connections outright (net::ERR_CONNECTION_CLOSED), leaving scenes
+    // blank. Fewer tabs render slower but actually get their footage.
+    concurrency: 2,
+    // A stock clip can be tens of megabytes; the default media timeout is not
+    // generous enough for that over a slow link.
+    timeoutInMilliseconds: 120_000,
     onProgress: options.onProgress
       ? ({ progress }) => options.onProgress?.(progress)
       : undefined,
