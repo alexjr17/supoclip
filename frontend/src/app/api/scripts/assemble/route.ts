@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/server/session";
+import { fetchBackend } from "@/server/backend-api";
 import { renderComposition } from "@/server/remotion-render";
 import { DEFAULT_SUBTITLE_STYLE } from "@/remotion/types";
 
@@ -10,6 +11,34 @@ import { DEFAULT_SUBTITLE_STYLE } from "@/remotion/types";
 // default budget, and Node-only.
 export const runtime = "nodejs";
 export const maxDuration = 900;
+
+/**
+ * Fetch one narration file from the backend and inline it.
+ *
+ * A scene whose audio cannot be fetched renders silent rather than failing the
+ * whole assembly — losing one scene's voice is better than losing the video.
+ */
+async function fetchNarrationDataUrl(
+  userId: string,
+  filename: string,
+): Promise<string> {
+  try {
+    const upstream = await fetchBackend(
+      `/scripts/narration/${encodeURIComponent(filename)}`,
+      { userId },
+    );
+    if (!upstream.ok) {
+      console.error(`Narration ${filename} unavailable: HTTP ${upstream.status}`);
+      return "";
+    }
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    return `data:audio/mpeg;base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.error(`Narration ${filename} could not be read:`, error);
+    return "";
+  }
+}
 
 interface IncomingScene {
   order?: number;
@@ -45,20 +74,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "scenes must be a non-empty array" }, { status: 400 });
   }
 
-  // The browser runs inside this server's own network namespace, so media has
-  // to be addressed by the port the server listens on, not the published one
-  // the client used.
-  const internalOrigin = `http://127.0.0.1:${process.env.PORT ?? 3107}`;
-
-  const scenes = incoming.map((scene, index) => ({
-    order: scene.order ?? index + 1,
-    videoSrc: scene.videoSrc ?? "",
-    audioSrc: scene.audioFilename
-      ? `${internalOrigin}/api/scripts/narration/${encodeURIComponent(scene.audioFilename)}`
-      : "",
-    durationInSeconds: scene.durationInSeconds ?? 0,
-    captions: Array.isArray(scene.captions) ? scene.captions : [],
-  }));
+  // Narration is inlined as a data URL rather than linked.
+  //
+  // The rendering browser has no session cookie, so pointing it at
+  // /api/scripts/narration/... returns 401 and the video comes out silent.
+  // Fetching here — where the session exists — and embedding the bytes avoids
+  // inventing an auth bypass for the renderer. Short-form narration is a few
+  // hundred KB per scene, which is fine to carry in the props.
+  const scenes = await Promise.all(
+    incoming.map(async (scene, index) => ({
+      order: scene.order ?? index + 1,
+      videoSrc: scene.videoSrc ?? "",
+      audioSrc: scene.audioFilename
+        ? await fetchNarrationDataUrl(session.user.id, scene.audioFilename)
+        : "",
+      durationInSeconds: scene.durationInSeconds ?? 0,
+      captions: Array.isArray(scene.captions) ? scene.captions : [],
+    })),
+  );
 
   const usable = scenes.filter((scene) => scene.durationInSeconds > 0);
   if (usable.length === 0) {

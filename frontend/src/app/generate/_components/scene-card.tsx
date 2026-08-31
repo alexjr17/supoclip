@@ -36,7 +36,9 @@ export function SceneCard({
           <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
             Scene {scene.order}
           </Badge>
-          {scene.character_names.map((name) => (
+          {/* Guarded: a scene arriving without these arrays should render
+              without its badges, not blank the whole page. */}
+          {(scene.character_names ?? []).map((name) => (
             <Badge key={name} className="h-5 bg-stone-900 px-1.5 text-[10px] text-white">
               {name}
             </Badge>
@@ -114,7 +116,7 @@ export function SceneCard({
           <span className="font-normal text-gray-400">— comma separated, English</span>
         </Label>
         <Input
-          value={scene.stock_keywords.join(", ")}
+          value={(scene.stock_keywords ?? []).join(", ")}
           onChange={(event) =>
             update(
               "stock_keywords",

@@ -234,10 +234,27 @@ export default function GeneratePage() {
               onNarrated={(result) => {
                 setNarration(result);
                 // The voice is the authority on scene length, so the script
-                // adopts the measured durations.
-                setScript((current) =>
-                  current ? { ...current, scenes: result.retimed_scenes } : current,
-                );
+                // adopts the measured durations — but only the durations.
+                // The narration endpoint is sent, and echoes back, just
+                // order/narration/duration; replacing whole scenes with its
+                // response would drop stock_keywords, character_names and the
+                // visual description.
+                setScript((current) => {
+                  if (!current) return current;
+                  const measured = new Map(
+                    result.scenes
+                      .filter((scene) => scene.duration > 0)
+                      .map((scene) => [scene.order, scene.duration]),
+                  );
+                  return {
+                    ...current,
+                    scenes: current.scenes.map((scene) => ({
+                      ...scene,
+                      duration_seconds:
+                        measured.get(scene.order) ?? scene.duration_seconds,
+                    })),
+                  };
+                });
               }}
             />
 

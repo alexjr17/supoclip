@@ -155,7 +155,6 @@ export interface SceneNarration {
 export interface NarrationResult {
   scenes: SceneNarration[];
   total_duration: number;
-  retimed_scenes: ScriptScene[];
 }
 
 export interface Voice {

@@ -148,8 +148,6 @@ async def narrate_script(
         logger.exception("Narration failed")
         raise HTTPException(status_code=502, detail="Narration failed") from error
 
-    scenes = [scene.model_dump() for scene in payload.scenes]
-
     return {
         "scenes": [
             {
@@ -162,8 +160,13 @@ async def narrate_script(
             }
             for result in results
         ],
+        # No re-timed script is returned. This endpoint is sent only
+        # order/narration/duration, so echoing "scenes" back would hand the
+        # caller stripped-down copies missing stock_keywords, character_names
+        # and the visual description — which is exactly the trap the client
+        # fell into. The measured duration per scene above is all that is
+        # needed to re-time a script the caller already holds.
         "total_duration": tts_service.total_narrated_duration(results),
-        "retimed_scenes": tts_service.retimed_scenes(scenes, results),
     }
 
 
