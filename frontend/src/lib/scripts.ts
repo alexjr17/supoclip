@@ -67,6 +67,72 @@ export async function generateScript(options: GenerateScriptOptions): Promise<Vi
   return data as VideoScript;
 }
 
+export interface StockCandidate {
+  id: number;
+  width: number;
+  height: number;
+  duration: number;
+  thumbnail: string | null;
+  preview_url: string | null;
+  download_url: string | null;
+  author: string | null;
+  author_url: string | null;
+  source: string;
+}
+
+export interface SceneFootage {
+  order: number;
+  keywords: string[];
+  candidates: StockCandidate[];
+  selected_id: number | null;
+}
+
+export interface FootageResult {
+  scenes: SceneFootage[];
+  /** Scenes that found nothing, so the user can rewrite their keywords. */
+  scenes_without_footage: number[];
+}
+
+export async function fetchStockStatus(): Promise<{
+  configured: boolean;
+  provider: string;
+}> {
+  const response = await fetch("/api/scripts/stock-status", { cache: "no-store" });
+  if (!response.ok) {
+    return { configured: false, provider: "pexels" };
+  }
+  return response.json();
+}
+
+export async function findFootage(scenes: ScriptScene[]): Promise<FootageResult> {
+  const response = await fetch("/api/scripts/find-footage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scenes: scenes.map((scene) => ({
+        order: scene.order,
+        stock_keywords: scene.stock_keywords,
+      })),
+    }),
+  });
+
+  const text = await response.text();
+  let data: Partial<FootageResult> & { detail?: string; error?: string } = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || "Failed to find stock footage");
+  }
+
+  return data as FootageResult;
+}
+
 /** Recomputes the total after the user edits scene durations by hand. */
 export function totalDuration(scenes: ScriptScene[]): number {
   return Math.round(scenes.reduce((sum, scene) => sum + (scene.duration_seconds || 0), 0) * 10) / 10;

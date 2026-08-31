@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowLeft, Clock, Film, Sparkles } from "lucide-react";
 
@@ -11,10 +11,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth-client";
-import { generateScript, totalDuration, type ScriptScene, type VideoScript } from "@/lib/scripts";
+import {
+  fetchStockStatus,
+  generateScript,
+  totalDuration,
+  type ScriptScene,
+  type VideoScript,
+} from "@/lib/scripts";
 
 import { CharacterSheet } from "./_components/character-sheet";
 import { SceneCard } from "./_components/scene-card";
+import { FootagePicker } from "./_components/footage-picker";
 import { ScriptBriefForm, type ScriptBrief } from "./_components/script-brief-form";
 
 const DEFAULT_BRIEF: ScriptBrief = {
@@ -32,6 +39,11 @@ export default function GeneratePage() {
   const [script, setScript] = useState<VideoScript | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stockConfigured, setStockConfigured] = useState(false);
+
+  useEffect(() => {
+    void fetchStockStatus().then((status) => setStockConfigured(status.configured));
+  }, []);
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -200,6 +212,8 @@ export default function GeneratePage() {
               characters={script.characters}
               onChange={(characters) => setScript({ ...script, characters })}
             />
+
+            <FootagePicker scenes={script.scenes} stockConfigured={stockConfigured} />
 
             <Alert className="border-amber-200 bg-amber-50">
               <AlertCircle className="h-4 w-4 text-amber-500" />
