@@ -1,3 +1,5 @@
+import { formatSupportMessage, parseApiError } from "@/lib/api-error";
+
 export type ScriptTone = "informative" | "energetic" | "story" | "calm" | "funny";
 
 export interface ScriptCharacter {
@@ -131,6 +133,91 @@ export async function findFootage(scenes: ScriptScene[]): Promise<FootageResult>
   }
 
   return data as FootageResult;
+}
+
+export interface NarrationWord {
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface SceneNarration {
+  order: number;
+  narration: string;
+  /** Measured from the synthesised voice, not estimated from word count. */
+  duration: number;
+  estimated_duration: number | null;
+  words: NarrationWord[];
+  audio_filename: string | null;
+  error: string | null;
+}
+
+export interface NarrationResult {
+  scenes: SceneNarration[];
+  total_duration: number;
+  retimed_scenes: ScriptScene[];
+}
+
+export interface Voice {
+  name: string;
+  locale: string;
+  gender: string;
+}
+
+export async function fetchVoices(language: string): Promise<Voice[]> {
+  const response = await fetch(
+    `/api/scripts/voices?language=${encodeURIComponent(language)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) return [];
+  return (await response.json()).voices ?? [];
+}
+
+export async function narrateScript(
+  scenes: ScriptScene[],
+  options: { language: string; gender?: string; voice?: string | null },
+): Promise<NarrationResult> {
+  const response = await fetch("/api/scripts/narrate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scenes: scenes.map((scene) => ({
+        order: scene.order,
+        narration: scene.narration,
+        duration_seconds: scene.duration_seconds,
+      })),
+      language: options.language,
+      gender: options.gender ?? "female",
+      voice: options.voice ?? null,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(formatSupportMessage(await parseApiError(response, "Narration failed")));
+  }
+  return response.json();
+}
+
+export interface AssembleScene {
+  order: number;
+  videoSrc: string;
+  audioFilename: string | null;
+  durationInSeconds: number;
+  captions: Array<{ text: string; startMs: number; endMs: number; emoji?: string }>;
+}
+
+/** Renders the assembled video and returns it as a blob for download. */
+export async function assembleVideo(scenes: AssembleScene[]): Promise<Blob> {
+  const response = await fetch("/api/scripts/assemble", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenes }),
+  });
+
+  if (!response.ok) {
+    throw new Error(formatSupportMessage(await parseApiError(response, "Assembly failed")));
+  }
+  return response.blob();
 }
 
 /** Recomputes the total after the user edits scene durations by hand. */

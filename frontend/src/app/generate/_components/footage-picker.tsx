@@ -14,6 +14,9 @@ interface FootagePickerProps {
   scenes: ScriptScene[];
   /** False when the deployment has no PEXELS_API_KEY. */
   stockConfigured: boolean;
+  /** Lifted so the assembly step can read what was found and chosen. */
+  onResult: (result: FootageResult) => void;
+  onSelectionChange: (selection: Record<number, number>) => void;
 }
 
 /**
@@ -22,7 +25,12 @@ interface FootagePickerProps {
  * A short list per scene rather than one automatic pick: stock search is
  * imprecise, and which near-miss actually works is the author's judgement.
  */
-export function FootagePicker({ scenes, stockConfigured }: FootagePickerProps) {
+export function FootagePicker({
+  scenes,
+  stockConfigured,
+  onResult,
+  onSelectionChange,
+}: FootagePickerProps) {
   const [result, setResult] = useState<FootageResult | null>(null);
   const [selection, setSelection] = useState<Record<number, number>>({});
   const [isSearching, setIsSearching] = useState(false);
@@ -34,13 +42,14 @@ export function FootagePicker({ scenes, stockConfigured }: FootagePickerProps) {
     try {
       const found = await findFootage(scenes);
       setResult(found);
-      setSelection(
-        Object.fromEntries(
-          found.scenes
-            .filter((scene) => scene.selected_id !== null)
-            .map((scene) => [scene.order, scene.selected_id as number]),
-        ),
+      onResult(found);
+      const defaults = Object.fromEntries(
+        found.scenes
+          .filter((scene) => scene.selected_id !== null)
+          .map((scene) => [scene.order, scene.selected_id as number]),
       );
+      setSelection(defaults);
+      onSelectionChange(defaults);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Search failed");
     } finally {
@@ -131,10 +140,11 @@ export function FootagePicker({ scenes, stockConfigured }: FootagePickerProps) {
                       key={candidate.id}
                       type="button"
                       onClick={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          [scene.order]: candidate.id,
-                        }))
+                        setSelection((current) => {
+                          const next = { ...current, [scene.order]: candidate.id };
+                          onSelectionChange(next);
+                          return next;
+                        })
                       }
                       className={`overflow-hidden rounded-md border-2 transition-colors ${
                         isSelected ? "border-stone-900" : "border-transparent hover:border-gray-300"
@@ -162,15 +172,6 @@ export function FootagePicker({ scenes, stockConfigured }: FootagePickerProps) {
           </div>
         ))}
 
-        {result && (
-          <Alert className="border-amber-200 bg-amber-50">
-            <AlertCircle className="h-4 w-4 text-amber-500" />
-            <AlertDescription className="text-sm text-amber-800">
-              Assembly is not wired up yet: choosing shots does not produce a video. Voice-over and
-              rendering come next.
-            </AlertDescription>
-          </Alert>
-        )}
       </CardContent>
     </Card>
   );

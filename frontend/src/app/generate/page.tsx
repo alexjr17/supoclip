@@ -15,6 +15,8 @@ import {
   fetchStockStatus,
   generateScript,
   totalDuration,
+  type FootageResult,
+  type NarrationResult,
   type ScriptScene,
   type VideoScript,
 } from "@/lib/scripts";
@@ -22,6 +24,8 @@ import {
 import { CharacterSheet } from "./_components/character-sheet";
 import { SceneCard } from "./_components/scene-card";
 import { FootagePicker } from "./_components/footage-picker";
+import { NarrationPanel } from "./_components/narration-panel";
+import { ProducePanel } from "./_components/produce-panel";
 import { ScriptBriefForm, type ScriptBrief } from "./_components/script-brief-form";
 
 const DEFAULT_BRIEF: ScriptBrief = {
@@ -40,6 +44,9 @@ export default function GeneratePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stockConfigured, setStockConfigured] = useState(false);
+  const [footage, setFootage] = useState<FootageResult | null>(null);
+  const [footageSelection, setFootageSelection] = useState<Record<number, number>>({});
+  const [narration, setNarration] = useState<NarrationResult | null>(null);
 
   useEffect(() => {
     void fetchStockStatus().then((status) => setStockConfigured(status.configured));
@@ -213,15 +220,34 @@ export default function GeneratePage() {
               onChange={(characters) => setScript({ ...script, characters })}
             />
 
-            <FootagePicker scenes={script.scenes} stockConfigured={stockConfigured} />
+            <FootagePicker
+              scenes={script.scenes}
+              stockConfigured={stockConfigured}
+              onResult={setFootage}
+              onSelectionChange={setFootageSelection}
+            />
 
-            <Alert className="border-amber-200 bg-amber-50">
-              <AlertCircle className="h-4 w-4 text-amber-500" />
-              <AlertDescription className="text-sm text-amber-800">
-                Rendering is not wired up yet. This step produces the script only — footage,
-                voice-over and the final video come next.
-              </AlertDescription>
-            </Alert>
+            <NarrationPanel
+              scenes={script.scenes}
+              language={brief.language}
+              result={narration}
+              onNarrated={(result) => {
+                setNarration(result);
+                // The voice is the authority on scene length, so the script
+                // adopts the measured durations.
+                setScript((current) =>
+                  current ? { ...current, scenes: result.retimed_scenes } : current,
+                );
+              }}
+            />
+
+            <ProducePanel
+              scenes={script.scenes}
+              footage={footage}
+              narration={narration}
+              selection={footageSelection}
+              showEmojis
+            />
           </>
         )}
       </main>
