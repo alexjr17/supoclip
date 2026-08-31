@@ -42,6 +42,44 @@ def is_configured() -> bool:
     return bool(get_config().pexels_api_key)
 
 
+# Output is 1080x1920. Pexels serves the same clip in several renditions, and
+# the largest is often 2160x4096 — four times the pixels that survive the
+# render, for four times the download. Renders were spending minutes pulling
+# hundreds of megabytes that were immediately scaled away.
+TARGET_WIDTH = 1080
+TARGET_HEIGHT = 1920
+
+
+def pick_rendition(video: Dict[str, Any]) -> Optional[str]:
+    """
+    Choose the rendition closest to the output size.
+
+    Prefers the smallest file that still covers 1080x1920, so nothing is
+    upscaled; if every rendition is smaller than that, the largest of them is
+    the best available.
+    """
+    files = [
+        item
+        for item in (video.get("video_files") or [])
+        if item.get("link") and item.get("width") and item.get("height")
+    ]
+    if not files:
+        return None
+
+    def pixels(item: Dict[str, Any]) -> int:
+        return int(item["width"]) * int(item["height"])
+
+    covering = [
+        item
+        for item in files
+        if int(item["width"]) >= TARGET_WIDTH and int(item["height"]) >= TARGET_HEIGHT
+    ]
+    if covering:
+        return min(covering, key=pixels)["link"]
+
+    return max(files, key=pixels)["link"]
+
+
 def _summarize(video: Dict[str, Any]) -> Dict[str, Any]:
     """Reduce a Pexels result to what the review screen needs."""
     return {
@@ -51,7 +89,8 @@ def _summarize(video: Dict[str, Any]) -> Dict[str, Any]:
         "duration": video.get("duration"),
         "thumbnail": video.get("image"),
         "preview_url": get_video_download_url(video, quality="sd"),
-        "download_url": get_video_download_url(video, quality="hd"),
+        "download_url": pick_rendition(video)
+        or get_video_download_url(video, quality="hd"),
         "author": (video.get("user") or {}).get("name"),
         "author_url": (video.get("user") or {}).get("url"),
         "source": "pexels",

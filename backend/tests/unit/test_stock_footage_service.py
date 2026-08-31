@@ -157,3 +157,43 @@ async def test_refuses_clearly_when_no_provider_is_configured(monkeypatch):
 
     with pytest.raises(stock.StockFootageUnavailable, match="PEXELS_API_KEY"):
         await stock.find_for_scenes([{"order": 1, "stock_keywords": ["x"]}])
+
+
+def make_renditions(*sizes):
+    return {
+        "id": 1,
+        "width": sizes[-1][0],
+        "height": sizes[-1][1],
+        "duration": 10,
+        "image": "t.jpg",
+        "user": {"name": "A", "url": "u"},
+        "video_files": [
+            {"quality": "hd", "width": w, "height": h, "link": f"{w}x{h}"}
+            for w, h in sizes
+        ],
+    }
+
+
+def test_picks_the_smallest_rendition_that_covers_the_output():
+    # 2160x3840 is four times the pixels that survive a 1080x1920 render, and
+    # four times the download.
+    video = make_renditions((540, 960), (1080, 1920), (2160, 3840))
+
+    assert stock.pick_rendition(video) == "1080x1920"
+
+
+def test_prefers_a_slightly_larger_rendition_over_upscaling():
+    video = make_renditions((720, 1280), (1440, 2560))
+
+    assert stock.pick_rendition(video) == "1440x2560"
+
+
+def test_falls_back_to_the_largest_when_none_are_big_enough():
+    video = make_renditions((360, 640), (720, 1280))
+
+    assert stock.pick_rendition(video) == "720x1280"
+
+
+def test_rendition_is_none_without_usable_files():
+    assert stock.pick_rendition({"video_files": []}) is None
+    assert stock.pick_rendition({"video_files": [{"link": "x"}]}) is None

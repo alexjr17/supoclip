@@ -207,16 +207,26 @@ export interface AssembleScene {
   captions: Array<{ text: string; startMs: number; endMs: number; emoji?: string }>;
 }
 
+export interface AssemblyProgress {
+  status: "queued" | "rendering" | "saving" | "done" | "error";
+  progress: number;
+  message: string;
+  taskId: string | null;
+  error?: string | null;
+}
+
 /**
- * Renders the assembled video, returning the file and where it was saved.
+ * Starts an assembly job and follows it to completion.
  *
- * `taskId` is null when the render succeeded but storing it in the library did
- * not — the download still works, it just is not listed for publishing.
+ * The render takes minutes, so the server returns a job id straight away and
+ * reports progress on a stream — the same shape the clipping pipeline uses.
+ * `onProgress` is called for every update.
  */
 export async function assembleVideo(
   scenes: AssembleScene[],
-  title?: string,
-): Promise<{ blob: Blob; taskId: string | null }> {
+  title: string | undefined,
+  onProgress: (update: AssemblyProgress) => void,
+): Promise<AssemblyProgress> {
   const response = await fetch("/api/scripts/assemble", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -227,10 +237,35 @@ export async function assembleVideo(
     throw new Error(formatSupportMessage(await parseApiError(response, "Assembly failed")));
   }
 
-  return {
-    blob: await response.blob(),
-    taskId: response.headers.get("x-supoclip-task-id"),
-  };
+  const { jobId } = (await response.json()) as { jobId: string };
+
+  return new Promise<AssemblyProgress>((resolve, reject) => {
+    const source = new EventSource(`/api/scripts/assemble/${jobId}`);
+
+    source.onmessage = (event) => {
+      const update = JSON.parse(event.data) as AssemblyProgress;
+      onProgress(update);
+
+      if (update.status === "done") {
+        source.close();
+        resolve(update);
+      } else if (update.status === "error") {
+        source.close();
+        reject(new Error(update.error || "Assembly failed"));
+      }
+    };
+
+    source.onerror = () => {
+      // The stream dropped. The render carries on server-side and still saves
+      // to the library, so this is reported rather than treated as a crash.
+      source.close();
+      reject(
+        new Error(
+          "Lost contact with the render. It may still finish — check your library in a few minutes.",
+        ),
+      );
+    };
+  });
 }
 
 /** Recomputes the total after the user edits scene durations by hand. */

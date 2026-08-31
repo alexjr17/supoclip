@@ -6,10 +6,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Link from "next/link";
-import { AlertCircle, CheckCircle, Clapperboard, Download, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle, Clapperboard, Loader2 } from "lucide-react";
 
+import { Progress } from "@/components/ui/progress";
 import {
   assembleVideo,
+  type AssemblyProgress,
   type FootageResult,
   type NarrationResult,
   type ScriptScene,
@@ -45,6 +47,7 @@ export function ProducePanel({
   const [isAssembling, setIsAssembling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedTaskId, setSavedTaskId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<AssemblyProgress | null>(null);
 
   const canAssemble = Boolean(narration && narration.scenes.some((s) => s.duration > 0));
 
@@ -82,16 +85,8 @@ export function ProducePanel({
           };
         });
 
-      const { blob, taskId } = await assembleVideo(payload, title);
-      setSavedTaskId(taskId);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "generated.mp4";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      const result = await assembleVideo(payload, title, setProgress);
+      setSavedTaskId(result.taskId);
     } catch (assembleError) {
       setError(assembleError instanceof Error ? assembleError.message : "Assembly failed");
     } finally {
@@ -150,15 +145,28 @@ export function ProducePanel({
           {isAssembling ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Rendering the video...</span>
+              <span>{progress?.message ?? "Starting..."}</span>
             </>
           ) : (
             <>
-              <Download className="h-4 w-4" />
-              <span>Assemble and download</span>
+              <Clapperboard className="h-4 w-4" />
+              <span>Assemble the video</span>
             </>
           )}
         </Button>
+
+        {isAssembling && (
+          <div className="space-y-1">
+            <Progress value={Math.round((progress?.progress ?? 0) * 100)} />
+            <p className="text-xs text-gray-500">
+              {/* Remotion sits at 0 while it pulls the stock clips, which is the
+                  slow part — the message says what is happening meanwhile. */}
+              {progress?.status === "saving"
+                ? "Almost there"
+                : `${Math.round((progress?.progress ?? 0) * 100)}% · you can leave this page, the render continues`}
+            </p>
+          </div>
+        )}
 
         {error && (
           <Alert className="border-red-200 bg-red-50">
@@ -181,10 +189,9 @@ export function ProducePanel({
         )}
 
         <p className="text-xs text-gray-500">
-          Rendering happens on the server and downloads each scene&apos;s stock clip first, so
-          expect several minutes for {scenes.length} scene{scenes.length === 1 ? "" : "s"} — well
-          longer than the video&apos;s own runtime. Leave the tab open; there is no progress bar
-          yet.
+          The render runs in the background and downloads each scene&apos;s stock clip first, so
+          expect several minutes for {scenes.length} scene{scenes.length === 1 ? "" : "s"}. It
+          finishes and saves even if you navigate away.
         </p>
       </CardContent>
     </Card>
