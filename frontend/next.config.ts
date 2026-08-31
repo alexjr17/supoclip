@@ -10,6 +10,13 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  // Remotion's bundler and renderer ship native .node binaries (rspack bindings,
+  // the headless browser launcher) that webpack cannot parse. They are required
+  // at runtime from node_modules instead of being bundled.
+  serverExternalPackages: [
+    "@remotion/bundler",
+    "@remotion/renderer",
+  ],
   async rewrites() {
     return [
       {

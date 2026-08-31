@@ -24,8 +24,16 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM base AS development
 WORKDIR /app
 
-# Install OpenSSL (required for Prisma) and curl for healthchecks
-RUN apt-get update && apt-get install -y openssl curl && rm -rf /var/lib/apt/lists/*
+# OpenSSL for Prisma, curl for healthchecks, and the shared libraries Chrome
+# Headless Shell needs: Remotion renders clips in a real browser, which is the
+# only way to get colour emoji into an export (libass cannot draw colour bitmap
+# emoji fonts). fonts-noto-color-emoji supplies the glyphs themselves.
+RUN apt-get update && apt-get install -y \
+    openssl curl \
+    libnss3 libnspr4 libexpat1 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libpango-1.0-0 libcairo2 libasound2 fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -99,8 +107,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install OpenSSL (required for Prisma) and curl for healthchecks
-RUN apt-get update && apt-get install -y openssl curl && rm -rf /var/lib/apt/lists/*
+# OpenSSL for Prisma, curl for healthchecks, and Chrome Headless Shell's shared
+# libraries — production renders clips through Remotion too, and without these
+# the browser exits 127 with no useful message.
+RUN apt-get update && apt-get install -y \
+    openssl curl \
+    libnss3 libnspr4 libexpat1 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libpango-1.0-0 libcairo2 libasound2 fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
 RUN groupadd --system --gid 1001 nodejs

@@ -27,10 +27,15 @@ export function ClipComposition({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
-      <VideoTag
-        src={videoSrc}
-        style={{ width: "100%", height: "100%", objectFit: "contain" }}
-      />
+      {/* An empty source renders on black rather than throwing: a caption-only
+          render is a legitimate case, and a clip whose file is momentarily
+          unreachable should not take the whole render down with it. */}
+      {videoSrc ? (
+        <VideoTag
+          src={videoSrc}
+          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+        />
+      ) : null}
 
       {hook ? <HookOverlay hook={hook} /> : null}
 
