@@ -95,7 +95,17 @@ export function ProducePanel({
           };
         });
 
-      const result = await assembleVideo(payload, title, setProgress, quality);
+      const result = await assembleVideo(
+        payload,
+        title,
+        (update) => {
+          setProgress(update);
+          // The task exists from the first update, so the link can be offered
+          // while the render is still going.
+          if (update.taskId) setSavedTaskId(update.taskId);
+        },
+        quality,
+      );
       setSavedTaskId(result.taskId);
     } catch (assembleError) {
       setError(assembleError instanceof Error ? assembleError.message : "Assembly failed");
@@ -200,6 +210,19 @@ export function ProducePanel({
           )}
         </Button>
 
+        {isAssembling && savedTaskId && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <AlertCircle className="h-4 w-4 text-blue-500" />
+            <AlertDescription className="text-sm text-blue-800">
+              This video is already in your library.{" "}
+              <Link href={`/tasks/${savedTaskId}`} className="font-medium underline">
+                Follow it there
+              </Link>{" "}
+              — progress shows on its page too, and the render carries on if you leave.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {isAssembling && (
           <div className="space-y-1">
             <Progress value={Math.round((progress?.progress ?? 0) * 100)} />
@@ -220,7 +243,7 @@ export function ProducePanel({
           </Alert>
         )}
 
-        {savedTaskId && (
+        {savedTaskId && !isAssembling && (
           <Alert className="border-green-200 bg-green-50">
             <CheckCircle className="h-4 w-4 text-green-500" />
             <AlertDescription className="text-sm text-green-700">

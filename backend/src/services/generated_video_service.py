@@ -42,33 +42,15 @@ class GeneratedVideoService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    async def save(
-        self,
-        user_id: str,
-        video_bytes: bytes,
-        *,
-        title: str = DEFAULT_TITLE,
-        duration: float = 0.0,
-        text_content: str = "",
-        hook_title: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    async def start(self, user_id: str, title: str = DEFAULT_TITLE) -> str:
         """
-        Store a rendered video as a completed task with one clip.
+        Create the task before rendering starts, so it is visible immediately.
 
-        A 'generated' source row is created alongside it so the video carries a
-        title through the listing and the task page without any of them needing
-        to special-case it.
+        This is what makes a generated video behave like a clipped one: it
+        appears in the listing straight away with a progress bar, and its detail
+        page streams progress over the same SSE endpoint. Waiting until the
+        render finished meant the user had nowhere to look while it ran.
         """
-        if not video_bytes:
-            raise ValueError("No video data to save")
-
-        filename = f"generated_{uuid4().hex}.mp4"
-        output_path = self._clips_dir() / filename
-        output_path.write_bytes(video_bytes)
-
-        # A source row, so the video carries its title through the listing and
-        # the task page like any other. Its type is 'generated' and it has no
-        # URL: the source really is the script, not a file somewhere.
         source_id = str(uuid4())
         await self.db.execute(
             text(
@@ -86,17 +68,51 @@ class GeneratedVideoService:
                 """
                 INSERT INTO tasks (
                     id, user_id, source_id, status, kind,
-                    progress, progress_message,
-                    created_at, updated_at, completed_at
+                    progress, progress_message, created_at, updated_at, started_at
                 ) VALUES (
-                    :id, :user_id, :source_id, 'completed', 'generated',
-                    100, 'Generated from a script',
-                    NOW(), NOW(), NOW()
+                    :id, :user_id, :source_id, 'processing', 'generated',
+                    0, 'Preparing', NOW(), NOW(), NOW()
                 )
                 """
             ),
             {"id": task_id, "user_id": user_id, "source_id": source_id},
         )
+        await self.db.commit()
+
+        logger.info("Started generated video task %s for user %s", task_id, user_id)
+        return task_id
+
+    async def report(self, task_id: str, progress: int, message: str) -> None:
+        """Publish progress for a running generation."""
+        await self.task_repo.update_task_status(
+            self.db,
+            task_id,
+            "processing",
+            progress=max(0, min(100, int(progress))),
+            progress_message=message[:200],
+        )
+
+    async def fail(self, task_id: str, message: str) -> None:
+        await self.task_repo.update_task_status(
+            self.db, task_id, "error", progress=0, progress_message=message[:200]
+        )
+
+    async def attach(
+        self,
+        task_id: str,
+        video_bytes: bytes,
+        *,
+        duration: float = 0.0,
+        text_content: str = "",
+        hook_title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach the finished video to a task started earlier and complete it."""
+        if not video_bytes:
+            raise ValueError("No video data to save")
+
+        filename = f"generated_{uuid4().hex}.mp4"
+        output_path = self._clips_dir() / filename
+        output_path.write_bytes(video_bytes)
 
         clip_id = await self.clip_repo.create_clip(
             self.db,
@@ -106,7 +122,7 @@ class GeneratedVideoService:
             start_time="00:00",
             end_time=self._seconds_to_mmss(duration),
             duration=duration,
-            text=text_content or title,
+            text=text_content or DEFAULT_TITLE,
             relevance_score=1.0,
             reasoning="Assembled from an AI-written script",
             clip_order=1,
@@ -120,11 +136,22 @@ class GeneratedVideoService:
         )
 
         await self.task_repo.update_task_clips(self.db, task_id, [clip_id])
+        await self.db.execute(
+            text(
+                """
+                UPDATE tasks
+                SET status = 'completed', progress = 100,
+                    progress_message = 'Ready to publish',
+                    completed_at = NOW(), updated_at = NOW()
+                WHERE id = :id
+                """
+            ),
+            {"id": task_id},
+        )
         await self.db.commit()
 
         logger.info(
-            "Saved generated video %s as task %s (%.2fs, %s bytes)",
-            filename,
+            "Completed generated video task %s (%.2fs, %s bytes)",
             task_id,
             duration,
             len(video_bytes),

@@ -12,37 +12,85 @@ import { DEFAULT_SUBTITLE_STYLE } from "@/remotion/types";
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
+/** Create the task up front so the user can watch it from the listing. */
+async function startTask(userId: string, title?: string): Promise<string | null> {
+  try {
+    const upstream = await fetchBackend("/scripts/start-video", {
+      method: "POST",
+      userId,
+      extraHeaders: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title?.slice(0, 200) || "AI generated video" }),
+    });
+    if (!upstream.ok) return null;
+    return (await upstream.json()).task_id ?? null;
+  } catch (error) {
+    console.error("Could not create the generation task:", error);
+    return null;
+  }
+}
+
 /**
- * Store the finished video as a task so it can be published later.
+ * Mirror progress onto the task.
  *
- * Returns null on failure rather than throwing: the render succeeded, and
- * losing the video because the library write failed would be the worse outcome.
+ * Best-effort and never awaited on the render's critical path: a dropped
+ * progress update must not slow down or fail the render itself.
  */
-async function saveToLibrary(
+async function reportTask(
   userId: string,
+  taskId: string,
+  progress: number,
+  message: string,
+): Promise<void> {
+  try {
+    await fetchBackend("/scripts/video-progress", {
+      method: "POST",
+      userId,
+      extraHeaders: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId, progress, message }),
+    });
+  } catch {
+    // Ignored on purpose; see above.
+  }
+}
+
+async function attachToTask(
+  userId: string,
+  taskId: string,
   file: Buffer,
-  meta: { title?: string; duration: number },
-): Promise<{ task_id: string } | null> {
+  duration: number,
+): Promise<boolean> {
   try {
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(file)], { type: "video/mp4" }), "generated.mp4");
-    form.append("title", meta.title?.slice(0, 200) || "AI generated video");
-    form.append("duration", String(meta.duration));
+    form.append("task_id", taskId);
+    form.append("duration", String(duration));
 
-    const upstream = await fetchBackend("/scripts/save-video", {
+    const upstream = await fetchBackend("/scripts/attach-video", {
       method: "POST",
       userId,
       body: form,
     });
-
     if (!upstream.ok) {
-      console.error("Saving the generated video failed:", upstream.status);
-      return null;
+      console.error("Attaching the generated video failed:", upstream.status);
+      return false;
     }
-    return await upstream.json();
+    return true;
   } catch (error) {
-    console.error("Saving the generated video failed:", error);
-    return null;
+    console.error("Attaching the generated video failed:", error);
+    return false;
+  }
+}
+
+async function failTask(userId: string, taskId: string, message: string): Promise<void> {
+  try {
+    await fetchBackend("/scripts/fail-video", {
+      method: "POST",
+      userId,
+      extraHeaders: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId, progress: 0, message }),
+    });
+  } catch {
+    // Ignored: the render already failed, and the message is a courtesy.
   }
 }
 
@@ -137,9 +185,13 @@ async function runAssembly(
 ) {
   let rendered: Awaited<ReturnType<typeof renderComposition>> | null = null;
 
-  try {
-    updateJob(jobId, { status: "rendering", message: "Fetching narration" });
+  // Created before any work, so the video shows up in the listing immediately
+  // with a progress bar, the same way a clipped one does.
+  const taskId = await startTask(userId, payload.title);
+  updateJob(jobId, { taskId, status: "rendering", message: "Fetching narration" });
+  if (taskId) void reportTask(userId, taskId, 2, "Fetching narration");
 
+  try {
     const scenes = await Promise.all(
       incoming.map(async (scene, index) => ({
         order: scene.order ?? index + 1,
@@ -154,8 +206,15 @@ async function runAssembly(
     );
 
     const usable = scenes.filter((scene) => scene.durationInSeconds > 0);
+    const duration = usable.reduce((total, scene) => total + scene.durationInSeconds, 0);
 
     updateJob(jobId, { message: "Downloading footage" });
+    if (taskId) void reportTask(userId, taskId, 5, "Downloading footage");
+
+    // Progress is mirrored to the task at intervals rather than on every
+    // callback: Remotion fires per frame, and a database write per frame would
+    // cost more than the render.
+    let lastReported = 0;
 
     rendered = await renderComposition({
       compositionId: "Generated",
@@ -164,39 +223,37 @@ async function runAssembly(
         style: { ...DEFAULT_SUBTITLE_STYLE, ...(payload.style ?? {}) },
       },
       quality: payload.quality,
-      onProgress: (progress) =>
-        updateJob(jobId, {
-          progress,
-          // Remotion reports 0 while it is still pulling the stock clips, which
-          // is the slowest part; saying "downloading" there is more honest than
-          // showing a bar stuck at zero.
-          message:
-            progress < 0.02
-              ? "Downloading footage"
-              : `Rendering ${Math.round(progress * 100)}%`,
-        }),
+      onProgress: (progress) => {
+        const message =
+          progress < 0.02
+            ? "Downloading footage"
+            : `Rendering ${Math.round(progress * 100)}%`;
+        updateJob(jobId, { progress, message });
+
+        const percent = Math.round(progress * 90);
+        if (taskId && percent >= lastReported + 5) {
+          lastReported = percent;
+          void reportTask(userId, taskId, Math.max(5, percent), message);
+        }
+      },
     });
 
     updateJob(jobId, { status: "saving", progress: 1, message: "Saving to your library" });
+    if (taskId) void reportTask(userId, taskId, 95, "Saving");
 
     const file = await fs.readFile(rendered.outputPath);
-    const saved = await saveToLibrary(userId, file, {
-      title: payload.title,
-      duration: usable.reduce((total, scene) => total + scene.durationInSeconds, 0),
-    });
+    const attached = taskId ? await attachToTask(userId, taskId, file, duration) : false;
 
     updateJob(jobId, {
       status: "done",
-      message: saved ? "Saved to your library" : "Rendered, but saving to the library failed",
-      taskId: saved?.task_id ?? null,
+      message: attached ? "Saved to your library" : "Rendered, but saving failed",
+      taskId: attached ? taskId : null,
     });
   } catch (error) {
     console.error("Assembly failed:", error);
-    updateJob(jobId, {
-      status: "error",
-      error: error instanceof Error ? error.message : "Assembly failed",
-      message: "Assembly failed",
-    });
+    const message = error instanceof Error ? error.message : "Assembly failed";
+    if (taskId) await failTask(userId, taskId, message);
+    updateJob(jobId, { status: "error", error: message, message: "Assembly failed" });
   } finally {
     await rendered?.cleanup().catch(() => undefined);
   }

@@ -171,35 +171,71 @@ async def narrate_script(
     }
 
 
-@router.post("/save-video")
-async def save_generated_video(
+class StartVideoRequest(BaseModel):
+    title: str = Field(default=DEFAULT_TITLE, max_length=200)
+
+
+class VideoProgressRequest(BaseModel):
+    task_id: str
+    progress: int = Field(ge=0, le=100)
+    message: str = Field(default="", max_length=200)
+
+
+@router.post("/start-video")
+async def start_generated_video(
+    payload: StartVideoRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Create the task before the render begins.
+
+    A generated video then behaves like a clipped one from the first second: it
+    shows up in the listing with a progress bar, and its detail page streams
+    progress over the same SSE endpoint. Creating it only at the end left the
+    user with nowhere to watch while the render ran.
+    """
+    user_id = await resolve_authenticated_user_id(request, db, get_config())
+    task_id = await GeneratedVideoService(db).start(user_id, payload.title)
+    return {"task_id": task_id}
+
+
+@router.post("/video-progress")
+async def report_generated_video_progress(
+    payload: VideoProgressRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish progress for a running generation."""
+    await resolve_authenticated_user_id(request, db, get_config())
+    await GeneratedVideoService(db).report(
+        payload.task_id, payload.progress, payload.message
+    )
+    return {"ok": True}
+
+
+@router.post("/attach-video")
+async def attach_generated_video(
     request: Request,
     file: UploadFile = File(...),
-    title: str = Form(DEFAULT_TITLE),
+    task_id: str = Form(...),
     duration: float = Form(0.0),
     text_content: str = Form(""),
     hook_title: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Store a rendered generated video so it can be published like any clip.
-
-    It lands as a completed task with kind='generated' holding one clip, so the
-    listing, the task page, scheduling and the YouTube/TikTok publishers all
-    work on it unchanged.
-    """
-    user_id = await resolve_authenticated_user_id(request, db, get_config())
+    """Attach the finished render to its task and mark it complete."""
+    await resolve_authenticated_user_id(request, db, get_config())
 
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded video is empty")
 
+    service = GeneratedVideoService(db)
     try:
-        service = GeneratedVideoService(db)
-        return await service.save(
-            user_id,
+        return await service.attach(
+            task_id,
             data,
-            title=title,
             duration=duration,
             text_content=text_content,
             hook_title=hook_title or None,
@@ -207,8 +243,21 @@ async def save_generated_video(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
-        logger.exception("Saving the generated video failed")
+        logger.exception("Attaching the generated video failed")
+        await service.fail(task_id, "Could not save the rendered video")
         raise HTTPException(status_code=500, detail="Could not save the video") from error
+
+
+@router.post("/fail-video")
+async def fail_generated_video(
+    payload: VideoProgressRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a generation as failed so it does not sit at 'processing' forever."""
+    await resolve_authenticated_user_id(request, db, get_config())
+    await GeneratedVideoService(db).fail(payload.task_id, payload.message or "Render failed")
+    return {"ok": True}
 
 
 @router.get("/narration/{filename}")
