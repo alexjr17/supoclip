@@ -70,12 +70,21 @@ export interface RenderClipOptions {
   onProgress?: (progress: number) => void;
 }
 
+export interface RenderCompositionOptions {
+  compositionId: string;
+  inputProps: Record<string, unknown>;
+  onProgress?: (progress: number) => void;
+}
+
 export interface RenderedClip {
   outputPath: string;
   cleanup: () => Promise<void>;
 }
 
-export async function renderClip(options: RenderClipOptions): Promise<RenderedClip> {
+/** Render any composition in the bundle. */
+export async function renderComposition(
+  options: RenderCompositionOptions,
+): Promise<RenderedClip> {
   const rendererName = "@remotion/renderer";
   const { getCompositions, renderMedia, ensureBrowser } =
     loadRemotion<typeof import("@remotion/renderer")>(rendererName);
@@ -84,18 +93,12 @@ export async function renderClip(options: RenderClipOptions): Promise<RenderedCl
   await ensureBrowser();
 
   const serveUrl = await getBundle();
-  const inputProps = {
-    videoSrc: options.videoSrc,
-    durationInSeconds: options.durationInSeconds,
-    captions: options.captions,
-    style: options.style,
-    hook: options.hook,
-  };
+  const { compositionId, inputProps } = options;
 
   const compositions = await getCompositions(serveUrl, { inputProps });
-  const composition = compositions.find((item) => item.id === "Clip");
+  const composition = compositions.find((item) => item.id === compositionId);
   if (!composition) {
-    throw new Error("Remotion composition 'Clip' not found in the bundle");
+    throw new Error(`Remotion composition '${compositionId}' not found in the bundle`);
   }
 
   const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "supoclip-render-"));
@@ -116,4 +119,19 @@ export async function renderClip(options: RenderClipOptions): Promise<RenderedCl
     outputPath,
     cleanup: () => fs.rm(outputDir, { recursive: true, force: true }),
   };
+}
+
+/** Render a single edited clip. */
+export function renderClip(options: RenderClipOptions): Promise<RenderedClip> {
+  return renderComposition({
+    compositionId: "Clip",
+    inputProps: {
+      videoSrc: options.videoSrc,
+      durationInSeconds: options.durationInSeconds,
+      captions: options.captions,
+      style: options.style,
+      hook: options.hook,
+    },
+    onProgress: options.onProgress,
+  });
 }

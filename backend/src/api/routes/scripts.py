@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,13 +152,42 @@ async def narrate_script(
 
     return {
         "scenes": [
-            # The audio path stays server-side; the client only needs timing.
-            {key: value for key, value in result.items() if key != "audio_path"}
+            {
+                **{k: v for k, v in result.items() if k != "audio_path"},
+                # The path itself stays server-side; the client gets only the
+                # name, which it turns into a /scripts/narration/<name> URL.
+                "audio_filename": (
+                    Path(result["audio_path"]).name if result.get("audio_path") else None
+                ),
+            }
             for result in results
         ],
         "total_duration": tts_service.total_narrated_duration(results),
         "retimed_scenes": tts_service.retimed_scenes(scenes, results),
     }
+
+
+@router.get("/narration/{filename}")
+async def serve_narration(
+    filename: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """
+    Serve a synthesised narration file.
+
+    Needed because assembly renders in a browser, which can only reach audio
+    over HTTP. Files are scoped to the requesting user's own directory and the
+    name is checked against traversal, so one user cannot read another's.
+    """
+    user_id = await resolve_authenticated_user_id(request, db, get_config())
+
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    path = Path(get_config().temp_dir) / "narration" / str(user_id) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Narration not found")
+
+    return FileResponse(path, media_type="audio/mpeg", filename=filename)
 
 
 @router.post("/generate")

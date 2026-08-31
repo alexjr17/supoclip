@@ -2,9 +2,15 @@ import React from "react";
 import { Composition, registerRoot } from "remotion";
 
 import { ClipComposition } from "./clip-composition";
+import {
+  GeneratedVideo,
+  totalFrames,
+  type GeneratedVideoProps,
+} from "./generated-video";
 import { DEFAULT_SUBTITLE_STYLE, type ClipCompositionProps } from "./types";
 
 export const CLIP_COMPOSITION_ID = "Clip";
+export const GENERATED_COMPOSITION_ID = "Generated";
 export const RENDER_FPS = 30;
 
 const DEFAULT_PROPS: Omit<
@@ -27,6 +33,41 @@ const DEFAULT_PROPS: Omit<
  * fixed here: every clip is a different length.
  */
 export function RemotionRoot() {
+  return (
+    <>
+      <ClipComp />
+      <GeneratedComp />
+    </>
+  );
+}
+
+// Typed explicitly: an inferred `never[]` for scenes does not satisfy
+// Composition's prop constraint.
+const GENERATED_DEFAULT_PROPS: GeneratedVideoProps = {
+  scenes: [],
+  style: DEFAULT_SUBTITLE_STYLE,
+};
+
+function GeneratedComp() {
+  return (
+    <Composition
+      id={GENERATED_COMPOSITION_ID}
+      component={GeneratedVideo}
+      durationInFrames={RENDER_FPS * 10}
+      fps={RENDER_FPS}
+      width={1080}
+      height={1920}
+      defaultProps={GENERATED_DEFAULT_PROPS}
+      calculateMetadata={({ props }) => ({
+        // Total length is the sum of the scenes, each already timed by its own
+        // narration.
+        durationInFrames: totalFrames(props.scenes ?? [], RENDER_FPS),
+      })}
+    />
+  );
+}
+
+function ClipComp() {
   return (
     <Composition
       id={CLIP_COMPOSITION_ID}
