@@ -49,7 +49,32 @@ class FakeQueueAdapter:
 
 @pytest.fixture(scope="session")
 def test_database_url():
-    return os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    """
+    Where the tests are allowed to write.
+
+    TEST_DATABASE_URL is required when DATABASE_URL points at a real database.
+    The fixtures create and delete rows, so falling back to DATABASE_URL means
+    running the suite wipes whatever the application has — which is exactly what
+    happened: a development database lost its tasks to a test run.
+
+    Deriving a sibling `_test` database from DATABASE_URL keeps the suite
+    runnable with no extra configuration while keeping it off live data.
+    """
+    explicit = os.getenv("TEST_DATABASE_URL")
+    if explicit:
+        return explicit
+
+    app_url = os.getenv("DATABASE_URL")
+    if not app_url:
+        return None
+
+    base, _, name = app_url.rpartition("/")
+    if not name or name.endswith("_test"):
+        return app_url
+
+    # Query strings are rare here but would otherwise end up inside the name.
+    name, sep, query = name.partition("?")
+    return f"{base}/{name}_test{sep}{query}"
 
 
 @pytest.fixture(scope="session")
