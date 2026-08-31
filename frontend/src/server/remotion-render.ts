@@ -60,6 +60,31 @@ async function getBundle(): Promise<string> {
   return bundlePromise;
 }
 
+async function clearRenderTemp(activeBundle: string | null): Promise<void> {
+  try {
+    const tmp = os.tmpdir();
+    const entries = await fs.readdir(tmp);
+
+    const removable = entries.filter((name) => {
+      const full = path.join(tmp, name);
+      if (name.startsWith("react-motion-render")) return true;
+      if (name.startsWith("remotion-") && name.includes("assets")) return true;
+      if (name.startsWith("remotion-webpack-bundle")) {
+        return !activeBundle || !activeBundle.includes(full);
+      }
+      return false;
+    });
+
+    await Promise.all(
+      removable.map((name) =>
+        fs.rm(path.join(tmp, name), { recursive: true, force: true }),
+      ),
+    );
+  } catch (error) {
+    console.warn("Could not clear Remotion temp directories:", error);
+  }
+}
+
 export interface RenderClipOptions {
   videoSrc: string;
   durationInSeconds: number;
@@ -125,8 +150,35 @@ export async function renderComposition(
 
   return {
     outputPath,
-    cleanup: () => fs.rm(outputDir, { recursive: true, force: true }),
+    cleanup: async () => {
+      await fs.rm(outputDir, { recursive: true, force: true });
+      await clearAssetCache();
+    },
   };
+}
+
+/**
+ * Delete the stock clips OffthreadVideo downloaded for this render.
+ *
+ * Remotion caches every fetched asset under /tmp and never reclaims it. Those
+ * are whole stock videos: one ten-scene render left 467 MB behind, and enough
+ * of them filled the host disk to the point where Docker itself would no
+ * longer start. Failures here are ignored — a stale cache is a far smaller
+ * problem than failing a render that already succeeded.
+ */
+async function clearAssetCache(): Promise<void> {
+  try {
+    const entries = await fs.readdir(os.tmpdir());
+    await Promise.all(
+      entries
+        .filter((name) => name.startsWith("remotion-") && name.includes("assets"))
+        .map((name) =>
+          fs.rm(path.join(os.tmpdir(), name), { recursive: true, force: true }),
+        ),
+    );
+  } catch (error) {
+    console.warn("Could not clear the Remotion asset cache:", error);
+  }
 }
 
 /** Render a single edited clip. */
