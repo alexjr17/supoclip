@@ -1,9 +1,13 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { PrismaClient } from "../generated/prisma";
 import { nextCookies } from "better-auth/next-js";
 
-const prisma = new PrismaClient();
+// The shared client, not a fresh one. Every hot reload re-evaluates this
+// module, and `new PrismaClient()` opens a connection pool per evaluation
+// that is never closed — after a few hours of editing, Postgres refuses new
+// connections with "sorry, too many clients already" and sign-in starts
+// failing with a 500. lib/prisma.ts caches the client on globalThis.
+import prisma from "./prisma";
 const disableSignUp = ["1", "true", "yes"].includes(
   (process.env.DISABLE_SIGN_UP ?? "").toLowerCase()
 );

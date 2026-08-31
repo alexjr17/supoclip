@@ -1,7 +1,6 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 
 import type { CaptionWord, HookConfig, SubtitleStyle } from "@/remotion/types";
 
@@ -9,37 +8,38 @@ import type { CaptionWord, HookConfig, SubtitleStyle } from "@/remotion/types";
  * Load Remotion's Node packages at runtime, out of webpack's sight.
  *
  * They ship native .node binaries (the rspack binding, the browser launcher)
- * that webpack cannot parse, and it fails the whole route trying. A dynamic
- * import() is not enough — webpack still walks it — so the specifier is held in
- * a variable, which defeats static analysis, and resolved with a real require.
+ * that webpack cannot parse and fails the whole route on. Three attempts were
+ * needed to get out of its way:
+ *
+ *   - serverExternalPackages alone: webpack still walks a dynamic import().
+ *   - createRequire + a variable specifier: webpack replaces the call with its
+ *     own empty context module, so the route compiles and then throws
+ *     "Cannot find module" from webpackEmptyContext at runtime.
+ *   - eval("require"): webpack cannot analyse it at all, so the real Node
+ *     require survives into the bundle and resolves from node_modules.
+ *
+ * The eval runs once, on a constant, and never on user input.
  */
-const nodeRequire = createRequire(import.meta.url);
+const runtimeRequire: NodeRequire = eval("require");
 
 function loadRemotion<T>(packageName: string): T {
-  return nodeRequire(packageName) as T;
+  return runtimeRequire(packageName) as T;
 }
 
 /**
- * Server-side Remotion rendering.
+ * The Remotion bundle, built once per process.
  *
- * This is the only way to get colour emoji into an exported clip. The ffmpeg
- * path burns captions with libass, which cannot render colour bitmap emoji
- * fonts (NotoColorEmoji is CBDT and only loads at fixed strike sizes), so it
- * falls back to a monochrome face and every emoji comes out grey. Remotion
- * rasterises the same React component the preview uses, in a real browser,
- * where colour emoji need no special handling.
- *
- * The bundle is expensive to build and identical between renders, so it is
- * created once per process and reused.
+ * Bundling takes ~25s and the result is identical between renders, so it is
+ * cached rather than rebuilt for every request.
  */
-
 let bundlePromise: Promise<string> | null = null;
 
 async function getBundle(): Promise<string> {
   if (!bundlePromise) {
     bundlePromise = (async () => {
-      const bundlerName = "@remotion/bundler";
-      const { bundle } = loadRemotion<typeof import("@remotion/bundler")>(bundlerName);
+      const { bundle } = loadRemotion<typeof import("@remotion/bundler")>(
+        "@remotion/bundler",
+      );
       return bundle({
         entryPoint: path.join(process.cwd(), "src/remotion/root.tsx"),
         // Next's own webpack config is not reusable here; Remotion builds its
