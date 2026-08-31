@@ -52,11 +52,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "captions must be an array" }, { status: 400 });
   }
 
+  // The headless browser runs inside this process's own network namespace, so
+  // a path has to be resolved against the address the server itself listens on
+  // — the origin the client used is a published host port it cannot reach.
+  const absoluteVideoSrc = videoSrc.startsWith("/")
+    ? `http://127.0.0.1:${process.env.PORT ?? 3107}${videoSrc}`
+    : videoSrc;
+
   let rendered: Awaited<ReturnType<typeof renderClip>> | null = null;
 
   try {
     rendered = await renderClip({
-      videoSrc,
+      videoSrc: absoluteVideoSrc,
       durationInSeconds,
       captions: payload.captions as never,
       style: { ...DEFAULT_SUBTITLE_STYLE, ...(payload.style ?? {}) } as never,
