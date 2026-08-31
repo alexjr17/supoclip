@@ -222,15 +222,28 @@ export interface AssemblyProgress {
  * reports progress on a stream — the same shape the clipping pipeline uses.
  * `onProgress` is called for every update.
  */
+export type RenderQuality = "fast" | "balanced" | "high";
+
+export const RENDER_QUALITIES: Array<{
+  value: RenderQuality;
+  label: string;
+  detail: string;
+}> = [
+  { value: "fast", label: "Fast", detail: "Smallest file, quickest encode" },
+  { value: "balanced", label: "Balanced", detail: "Recommended for social" },
+  { value: "high", label: "High", detail: "Largest file, slowest" },
+];
+
 export async function assembleVideo(
   scenes: AssembleScene[],
   title: string | undefined,
   onProgress: (update: AssemblyProgress) => void,
+  quality: RenderQuality = "balanced",
 ): Promise<AssemblyProgress> {
   const response = await fetch("/api/scripts/assemble", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scenes, title }),
+    body: JSON.stringify({ scenes, title, quality }),
   });
 
   if (!response.ok) {

@@ -95,9 +95,33 @@ export interface RenderClipOptions {
   onProgress?: (progress: number) => void;
 }
 
+export type RenderQuality = "fast" | "balanced" | "high";
+
+/**
+ * What each quality setting actually trades.
+ *
+ * Remotion's default is CRF 18 with the "medium" x264 preset — visually
+ * lossless, and the reason a 29-second video came out at 30 MB and spent as
+ * long encoding as rendering. For a vertical social clip that is far past the
+ * point of visible difference.
+ *
+ * `crf` is the encoder's quality target (lower is better and bigger);
+ * `x264Preset` is how hard it works to hit it; `jpegQuality` is the fidelity of
+ * the frames Chrome hands to the encoder.
+ */
+export const QUALITY_PRESETS: Record<
+  RenderQuality,
+  { crf: number; x264Preset: "veryfast" | "faster" | "medium"; jpegQuality: number; label: string }
+> = {
+  fast: { crf: 28, x264Preset: "veryfast", jpegQuality: 80, label: "Fast" },
+  balanced: { crf: 23, x264Preset: "faster", jpegQuality: 90, label: "Balanced" },
+  high: { crf: 18, x264Preset: "medium", jpegQuality: 100, label: "High" },
+};
+
 export interface RenderCompositionOptions {
   compositionId: string;
   inputProps: Record<string, unknown>;
+  quality?: RenderQuality;
   onProgress?: (progress: number) => void;
 }
 
@@ -129,12 +153,17 @@ export async function renderComposition(
   const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "supoclip-render-"));
   const outputPath = path.join(outputDir, "clip.mp4");
 
+  const preset = QUALITY_PRESETS[options.quality ?? "balanced"];
+
   await renderMedia({
     composition,
     serveUrl,
     codec: "h264",
     outputLocation: outputPath,
     inputProps,
+    crf: preset.crf,
+    x264Preset: preset.x264Preset,
+    jpegQuality: preset.jpegQuality,
     // Remotion defaults to one browser tab per core, and each tab pulls its
     // scene's stock clip independently. Ten parallel HD downloads made Pexels
     // drop connections outright (net::ERR_CONNECTION_CLOSED), leaving scenes

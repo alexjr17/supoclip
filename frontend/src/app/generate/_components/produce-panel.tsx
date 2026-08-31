@@ -8,10 +8,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import Link from "next/link";
 import { AlertCircle, CheckCircle, Clapperboard, Loader2 } from "lucide-react";
 
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
   assembleVideo,
+  RENDER_QUALITIES,
   type AssemblyProgress,
+  type RenderQuality,
   type FootageResult,
   type NarrationResult,
   type ScriptScene,
@@ -48,8 +51,15 @@ export function ProducePanel({
   const [error, setError] = useState<string | null>(null);
   const [savedTaskId, setSavedTaskId] = useState<string | null>(null);
   const [progress, setProgress] = useState<AssemblyProgress | null>(null);
+  const [quality, setQuality] = useState<RenderQuality>("balanced");
 
   const canAssemble = Boolean(narration && narration.scenes.some((s) => s.duration > 0));
+
+  // Every frame is rendered individually in a headless browser, so the frame
+  // count is the honest measure of how much work a render is — not the runtime.
+  const runtimeSeconds =
+    narration?.scenes.reduce((total, scene) => total + (scene.duration || 0), 0) ?? 0;
+  const totalFrames = Math.round(runtimeSeconds * 30);
 
   const handleAssemble = async () => {
     if (!narration) return;
@@ -85,7 +95,7 @@ export function ProducePanel({
           };
         });
 
-      const result = await assembleVideo(payload, title, setProgress);
+      const result = await assembleVideo(payload, title, setProgress, quality);
       setSavedTaskId(result.taskId);
     } catch (assembleError) {
       setError(assembleError instanceof Error ? assembleError.message : "Assembly failed");
@@ -135,6 +145,41 @@ export function ProducePanel({
               chosen and will render on black, with their narration and captions.
             </AlertDescription>
           </Alert>
+        )}
+
+        {canAssemble && (
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+              <Spec label="Resolution" value="1080 × 1920" />
+              <Spec label="Frame rate" value="30 fps" />
+              <Spec label="Runtime" value={`${runtimeSeconds.toFixed(1)}s`} />
+              <Spec label="Frames" value={totalFrames.toLocaleString()} />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-gray-600">Quality</Label>
+              <div className="grid grid-cols-3 gap-1 rounded-md bg-gray-100 p-1">
+                {RENDER_QUALITIES.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setQuality(option.value)}
+                    disabled={isAssembling}
+                    className={`rounded px-2 py-1.5 text-xs font-medium transition-colors ${
+                      quality === option.value
+                        ? "bg-white text-black shadow-sm"
+                        : "text-gray-600 hover:text-black"
+                    }`}
+                  >
+                    <span className="block">{option.label}</span>
+                    <span className="block text-[10px] font-normal text-gray-500">
+                      {option.detail}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
 
         <Button
@@ -195,5 +240,14 @@ export function ProducePanel({
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+function Spec({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-gray-500">{label}</span>
+      <span className="block font-medium text-black">{value}</span>
+    </div>
   );
 }

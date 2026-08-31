@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/server/session";
 import { fetchBackend } from "@/server/backend-api";
-import { renderComposition } from "@/server/remotion-render";
+import { renderComposition, type RenderQuality } from "@/server/remotion-render";
 import { createJob, updateJob } from "@/server/render-jobs";
 import { DEFAULT_SUBTITLE_STYLE } from "@/remotion/types";
 
@@ -99,6 +99,7 @@ export async function POST(request: Request) {
     scenes?: IncomingScene[];
     style?: Record<string, unknown>;
     title?: string;
+    quality?: RenderQuality;
   };
   try {
     payload = await request.json();
@@ -132,7 +133,7 @@ async function runAssembly(
   jobId: string,
   userId: string,
   incoming: IncomingScene[],
-  payload: { style?: Record<string, unknown>; title?: string },
+  payload: { style?: Record<string, unknown>; title?: string; quality?: RenderQuality },
 ) {
   let rendered: Awaited<ReturnType<typeof renderComposition>> | null = null;
 
@@ -162,6 +163,7 @@ async function runAssembly(
         scenes: usable,
         style: { ...DEFAULT_SUBTITLE_STYLE, ...(payload.style ?? {}) },
       },
+      quality: payload.quality,
       onProgress: (progress) =>
         updateJob(jobId, {
           progress,
